@@ -24,6 +24,7 @@ struct Settings {
 
 	// [Settings]
 	std::wstring return_layout;    // 戻り先レイアウト (空なら自動保存したもの)
+	int drop_style = -1;           // 落とし先の見せ方 (0: 十字ボタン式 / 1: 区画の領域式 / -1: 既定値)
 
 	// [Tree]
 	std::wstring tree;             // 分割木 (空なら初期配置)

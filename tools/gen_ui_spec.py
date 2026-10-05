@@ -151,7 +151,32 @@ def write_table(ws, headers, widths, rows, input_col, status_col):
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(rows) + 1}"
 
 
-def generate_workbook(spec: dict) -> Workbook:
+INPUT_HEADER = "修正指示"
+
+
+def read_existing_instructions(path: Path) -> dict:
+    """既存の指示書から、シートごと・ID ごとの「修正指示」を読み取る (作り直しても消さないため)"""
+    found = {}
+    if not path.exists():
+        return found
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(path, read_only=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"注意: 既存の指示書を読めない ({e})")
+        return found
+    for ws in wb.worksheets:
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows or INPUT_HEADER not in rows[0]:
+            continue
+        col = rows[0].index(INPUT_HEADER)
+        for row in rows[1:]:
+            if row and row[0] and col < len(row) and row[col] not in (None, ""):
+                found.setdefault(ws.title, {})[row[0]] = row[col]
+    return found
+
+
+def generate_workbook(spec: dict, kept: dict) -> Workbook:
     wb = Workbook()
 
     # 使い方
@@ -189,28 +214,31 @@ def generate_workbook(spec: dict) -> Workbook:
             c.font = f
     ws.cell(row=4, column=1).fill = INPUT_FILL
 
+    def kept_of(sheet, item_id):
+        return kept.get(sheet, {}).get(item_id)
+
     # 文言
     ws = wb.create_sheet("文言")
     write_table(ws,
-                ["ID", "表示される場所", "現在の文言", "修正指示", "状態"],
+                ["ID", "表示される場所", "現在の文言", INPUT_HEADER, "状態"],
                 [24, 46, 60, 46, 14],
-                [[t["id"], t["where"], t["value"], None, t["status"]] for t in spec["text"]],
+                [[t["id"], t["where"], t["value"], kept_of("文言", t["id"]), t["status"]] for t in spec["text"]],
                 input_col=4, status_col=5)
 
     # 見た目
     ws = wb.create_sheet("見た目")
     write_table(ws,
-                ["ID", "項目", "現在の値", "単位", "修正指示", "状態", "備考"],
+                ["ID", "項目", "現在の値", "単位", INPUT_HEADER, "状態", "備考"],
                 [22, 36, 34, 22, 40, 14, 34],
-                [[d["id"], d["item"], d["value"], d["unit"], None, d["status"], d["note"]] for d in spec["design"]],
+                [[d["id"], d["item"], d["value"], d["unit"], kept_of("見た目", d["id"]), d["status"], d["note"]] for d in spec["design"]],
                 input_col=5, status_col=6)
 
     # 動作
     ws = wb.create_sheet("動作")
     write_table(ws,
-                ["ID", "項目", "現在の値", "選べる範囲", "単位", "修正指示", "状態", "備考"],
+                ["ID", "項目", "現在の値", "選べる範囲", "単位", INPUT_HEADER, "状態", "備考"],
                 [20, 36, 26, 30, 12, 40, 14, 34],
-                [[b["id"], b["item"], b["value"], b["choices"], b["unit"], None, b["status"], b["note"]] for b in spec["behavior"]],
+                [[b["id"], b["item"], b["value"], b["choices"], b["unit"], kept_of("動作", b["id"]), b["status"], b["note"]] for b in spec["behavior"]],
                 input_col=6, status_col=7)
 
     return wb
@@ -225,8 +253,16 @@ def main():
 
     HEADER.write_text(generate_header(spec), encoding="utf-8", newline="\r\n")
     print(f"生成: {HEADER}")
-    generate_workbook(spec).save(WORKBOOK)
-    print(f"生成: {WORKBOOK}")
+
+    kept = read_existing_instructions(WORKBOOK)
+    n = sum(len(v) for v in kept.values())
+    if n:
+        print(f"既存の指示書の「修正指示」{n} 件を引き継ぐ")
+    try:
+        generate_workbook(spec, kept).save(WORKBOOK)
+        print(f"生成: {WORKBOOK}")
+    except PermissionError:
+        print(f"注意: 指示書が開かれているため更新を見送った ({WORKBOOK.name})。閉じてから作り直すこと")
 
 
 if __name__ == "__main__":

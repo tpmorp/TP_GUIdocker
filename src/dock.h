@@ -18,6 +18,9 @@ void dock_request_startup();
 // メニューからの依頼 (編集セクション外で実行するため入れ物の窓へ依頼する)
 // 有効化・無効化の切り替え (メニュー項目は1つで、状態に応じて ui::MENU_ENABLE / ui::MENU_DISABLE に書き換える)
 void dock_request_toggle();
+
+// 落とし先の見せ方 (十字ボタン式 / 区画の領域式) を切り替える
+void dock_request_toggle_drop_style();
 void dock_request_reset_tree();
 void dock_request_choose_return_layout();
 

@@ -79,6 +79,10 @@ constexpr const wchar_t* AREA_NAME_EMPTY = L"空き区画 %d";
 constexpr const wchar_t* DROP_STYLE_COMPASS = L"落とし先の表示: 十字ボタン式";
 // 同上 [段階2で実装]
 constexpr const wchar_t* DROP_STYLE_REGION = L"落とし先の表示: 区画の領域式";
+// 空き区画の右クリックメニュー [段階2で実装]
+constexpr const wchar_t* AREA_CLOSE = L"この区画を閉じる";
+// 照合できなかった浮いた窓を区画へ入れようとした時の知らせ [段階2で実装]
+constexpr const wchar_t* DOCK_UNKNOWN_PANEL = L"このパネルは識別できないため、区画に入れられません。\n一度閉じて「表示」メニューから開き直してください。";
 
 //---------------------------------------------------------------------
 //	見た目 (数値で指定するもの。本体設定に連動する項目は host.cpp で読む)

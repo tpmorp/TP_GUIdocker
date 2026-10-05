@@ -49,6 +49,7 @@ void Settings::load() {
 	session_active = GetPrivateProfileIntW(L"State", L"session_active", 0, path.c_str()) != 0;
 	verified_version = (DWORD)GetPrivateProfileIntW(L"State", L"verified_version", 0, path.c_str());
 	return_layout = read_string(path, L"Settings", L"return_layout");
+	drop_style = GetPrivateProfileIntW(L"Settings", L"drop_style", -1, path.c_str());
 	tree = read_string(path, L"Tree", L"layout");
 	tree_version = GetPrivateProfileIntW(L"Tree", L"version", 0, path.c_str());
 
@@ -69,6 +70,7 @@ void Settings::save() const {
 	WritePrivateProfileStringW(L"State", L"session_active", session_active ? L"1" : L"0", path.c_str());
 	WritePrivateProfileStringW(L"State", L"verified_version", std::to_wstring(verified_version).c_str(), path.c_str());
 	WritePrivateProfileStringW(L"Settings", L"return_layout", return_layout.c_str(), path.c_str());
+	WritePrivateProfileStringW(L"Settings", L"drop_style", std::to_wstring(drop_style).c_str(), path.c_str());
 	WritePrivateProfileStringW(L"Tree", L"layout", tree.c_str(), path.c_str());
 	WritePrivateProfileStringW(L"Tree", L"version", std::to_wstring(tree_version).c_str(), path.c_str());
 

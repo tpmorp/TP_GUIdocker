@@ -15,6 +15,7 @@
 #include "host_ops.h"
 #include "layout_file.h"
 #include "settings.h"
+#include "overlay.h"
 #include "tree.h"
 #include "ui_spec.h"
 
@@ -36,6 +37,8 @@ enum : UINT {
 	WM_APP_RESET_TREE,
 	WM_APP_CHOOSE_RETURN,
 	WM_APP_RELAYOUT,
+	WM_APP_TOGGLE_DROP_STYLE,
+	WM_APP_DOCK_FLOAT,        // 浮いた窓を区画へ入れる (移動の操作が終わってから行う)
 };
 
 enum : UINT_PTR {
@@ -43,10 +46,13 @@ enum : UINT_PTR {
 	TIMER_WATCH = 2,
 	TIMER_REENTER = 3,
 	TIMER_STARTUP_ENTER = 4,
+	TIMER_LONG_PRESS = 5,     // タブの長押しの判定
+	TIMER_DRAG_POLL = 6,      // ドラッグ中の Esc キーの監視
 };
 
 constexpr UINT_PTR PANEL_SUBCLASS_ID = 0x7447;
 constexpr UINT_PTR MAIN_SUBCLASS_ID = 0x7448;
+constexpr UINT_PTR FLOAT_SUBCLASS_ID = 0x7449;
 constexpr int OFFSCREEN = -30000;   // 非表示タブのパネルを置く座標
 
 //---------------------------------------------------------------------
@@ -97,6 +103,29 @@ static std::set<UINT> g_explorer_cmds;    // 「表示」→「メディアエ�
 
 // 境界線のドラッグ
 static Node* g_drag = nullptr;
+
+// タブ・浮いた窓のドラッグ (ドッキング)
+enum class DragState { None, Pressed, Armed, Dragging };
+struct DragContext {
+	DragState state = DragState::None;
+	std::wstring key;          // 動かしているパネル
+	std::wstring title;
+	POINT down = {};           // 押した位置 (画面座標)
+	HWND float_hwnd = nullptr; // 浮いた窓を動かしている場合 (タブの場合は nullptr)
+};
+static DragContext g_dd;
+
+// 落とし先
+struct DropTarget {
+	bool inside = false;       // 入れ物の中か
+	Node* leaf = nullptr;
+	DropZone zone = DropZone::None;
+	int tab_index = -1;
+};
+static DropTarget g_target;
+static DropTarget g_pending_dock;   // 浮いた窓を入れる落とし先 (移動の操作が終わるまで預かる)
+static DropOverlay g_overlay;
+static DragGhost g_ghost;
 
 // 描画用
 static HFONT g_font = nullptr;
@@ -398,26 +427,384 @@ static bool restore_host_layout() {
 }
 
 //---------------------------------------------------------------------
+//	浮いた窓の管理
+//---------------------------------------------------------------------
+
+static LRESULT CALLBACK float_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR);
+
+static void add_float(HWND h, const std::wstring& key) {
+	if (find_float(h)) return;
+	g_floats.push_back({ h, key });
+	SetWindowSubclass(h, float_subclass_proc, FLOAT_SUBCLASS_ID, 0);
+}
+
+static void remove_float(HWND h) {
+	if (IsWindow(h)) RemoveWindowSubclass(h, float_subclass_proc, FLOAT_SUBCLASS_ID);
+	g_floats.erase(std::remove_if(g_floats.begin(), g_floats.end(), [&](const FloatPanel& f) { return f.hwnd == h; }), g_floats.end());
+}
+
+static void clear_floats() {
+	for (auto& f : g_floats) {
+		if (IsWindow(f.hwnd)) RemoveWindowSubclass(f.hwnd, float_subclass_proc, FLOAT_SUBCLASS_ID);
+	}
+	g_floats.clear();
+}
+
+//---------------------------------------------------------------------
+//	ドッキング: 落とし先の判定と表示
+//---------------------------------------------------------------------
+
+static int drop_style() {
+	return g_settings.drop_style >= 0 ? g_settings.drop_style : ui::DROP_STYLE;
+}
+
+// 十字ボタン式: 葉の本体の中央に5つのボタンを置く (画面座標)
+static std::vector<CompassButton> compass_buttons(const Node* leaf) {
+	std::vector<CompassButton> out;
+	RECT b = leaf->body;
+	MapWindowPoints(g_container, nullptr, (POINT*)&b, 2);
+	int size = scaled(ui::COMPASS_BUTTON);
+	int gap = std::max(2, size / 8);
+	int cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
+	auto at = [&](int dx, int dy, DropZone z) {
+		int x = cx - size / 2 + dx * (size + gap);
+		int y = cy - size / 2 + dy * (size + gap);
+		out.push_back({ { x, y, x + size, y + size }, (int)z, false });
+	};
+	at(0, 0, DropZone::Center);
+	at(-1, 0, DropZone::Left);
+	at(1, 0, DropZone::Right);
+	at(0, -1, DropZone::Top);
+	at(0, 1, DropZone::Bottom);
+	return out;
+}
+
+// 区画の領域式: 葉の中の位置から上下左右・中央を決める
+static DropZone region_zone(const Node* leaf, POINT client) {
+	const RECT& r = leaf->rect;
+	double w = std::max<LONG>(1, r.right - r.left), h = std::max<LONG>(1, r.bottom - r.top);
+	double dx = (client.x - r.left) / w, dy = (client.y - r.top) / h;
+	double e = ui::REGION_EDGE / 100.0;
+	double dist[4] = { dx, 1 - dx, dy, 1 - dy };
+	DropZone zones[4] = { DropZone::Left, DropZone::Right, DropZone::Top, DropZone::Bottom };
+	int best = (int)(std::min_element(dist, dist + 4) - dist);
+	return dist[best] < e ? zones[best] : DropZone::Center;
+}
+
+// タブ帯の上なら、何番目に差し込むか
+static int tab_insert_index(const Node* leaf, POINT client) {
+	int index = 0;
+	for (auto& t : g_tab_hits) {
+		if (t.leaf != leaf) continue;
+		if (client.x < (t.rect.left + t.rect.right) / 2) return index;
+		index++;
+	}
+	return index;
+}
+
+// 画面座標 pt の下の落とし先を求め、表示を更新する
+static void update_drop_target(POINT pt) {
+	DropTarget t;
+	DropVisual v;
+	POINT client = pt;
+	ScreenToClient(g_container, &client);
+	RECT rc;
+	GetClientRect(g_container, &rc);
+	t.inside = PtInRect(&rc, client) != FALSE;
+	if (t.inside && g_root) {
+		t.leaf = leaf_at(g_root.get(), client);
+	}
+	if (t.leaf) {
+		if (PtInRect(&t.leaf->tabs, client)) {
+			// タブ帯の上はどちらの方式でも「タブとして重ねる」
+			t.zone = DropZone::Center;
+			t.tab_index = tab_insert_index(t.leaf, client);
+		} else if (drop_style() == 0) {
+			v.buttons = compass_buttons(t.leaf);
+			for (auto& b : v.buttons) {
+				if (PtInRect(&b.rect, pt)) {
+					b.hot = true;
+					t.zone = (DropZone)b.zone;
+				}
+			}
+		} else {
+			t.zone = region_zone(t.leaf, client);
+		}
+	}
+	if (t.leaf && t.zone != DropZone::None) {
+		v.has_preview = true;
+		v.preview = drop_preview_rect(t.leaf, t.zone, gap_size());
+		MapWindowPoints(g_container, nullptr, (POINT*)&v.preview, 2);
+	}
+	g_target = t;
+	g_overlay.update(v, ui::DROP_HIGHLIGHT, ui::DROP_ALPHA,
+		style_color("ButtonBody", RGB(0x60, 0x60, 0x60)), style_color("Border", RGB(0x90, 0x90, 0x90)));
+}
+
+static void show_drop_overlay() {
+	RECT area;
+	GetWindowRect(g_container, &area);
+	g_overlay.show(g_main, area);
+}
+
+//---------------------------------------------------------------------
+//	ドッキング: パネルの出し入れ
+//---------------------------------------------------------------------
+
+// 取り込み中のパネルを区画から外し、浮いた窓にする (at が指定されれば、その位置へ)
+static void float_panel(const std::wstring& key, const POINT* at) {
+	auto it = std::find_if(g_panels.begin(), g_panels.end(), [&](const Panel& p) { return p.key == key; });
+	if (it == g_panels.end()) return;
+	Panel p = *it;
+	g_panels.erase(it);
+	remove_key(g_root.get(), key);
+	release_panel(p);
+	if (!IsWindowVisible(p.hwnd)) ShowWindow(p.hwnd, SW_SHOWNA);
+	// 大きさは、入れ物の中で使っていた大きさを引き継ぐ
+	int w = std::max<LONG>(p.assigned.right - p.assigned.left, scaled(200));
+	int h = std::max<LONG>(p.assigned.bottom - p.assigned.top, scaled(150));
+	if (p.assigned.left == OFFSCREEN) { w = scaled(ui::FLOAT_W); h = scaled(ui::FLOAT_H); }
+	if (at) {
+		SetWindowPos(p.hwnd, HWND_TOP, at->x - w / 2, at->y - scaled(12), w, h, SWP_NOACTIVATE);
+	} else {
+		SetWindowPos(p.hwnd, HWND_TOP, 0, 0, w, h, SWP_NOMOVE | SWP_NOACTIVATE);
+		move_float_to_center(p.hwnd);
+	}
+	add_float(p.hwnd, key);
+	log(L"浮かせた: " + key);
+	relayout();
+	save_tree();
+}
+
+// 浮いた窓を区画へ入れる
+static void dock_float(HWND h, Node* leaf, DropZone zone, int tab_index) {
+	FloatPanel* f = find_float(h);
+	if (!f || !leaf || zone == DropZone::None) return;
+	std::wstring key = f->key;
+	if (key.empty()) {
+		notify(ui::DOCK_UNKNOWN_PANEL, MB_ICONINFORMATION);
+		return;
+	}
+	remove_float(h);
+	insert_key(leaf, key, zone, tab_index);
+	if (!capture_panel(h, key)) {
+		// 取り込めなければ分割木から外し、浮いた窓に戻す
+		remove_key(g_root.get(), key);
+		add_float(h, key);
+	} else {
+		log(L"区画へ入れた: " + key);
+	}
+	relayout();
+	save_tree();
+}
+
+// パネルを閉じる (本体の「表示」メニューの項目で非表示にする。区画からの除去は監視で行う)
+static void close_panel(const std::wstring& key) {
+	for (auto& p : g_panels) {
+		if (p.key != key) continue;
+		HMENU bar = GetMenu(g_main);
+		UINT cmd = find_menu_command(g_main, { L"表示", p.title });
+		if (cmd && bar && (GetMenuState(bar, cmd, MF_BYCOMMAND) & MF_CHECKED)) {
+			SendMessageW(g_main, WM_COMMAND, MAKEWPARAM(cmd, 0), 0);
+			log(L"閉じた: " + key);
+		} else {
+			log(L"「表示」メニューに項目が無いため閉じられない: " + key);
+		}
+		return;
+	}
+}
+
+//---------------------------------------------------------------------
+//	ドッキング: ドラッグ
+//---------------------------------------------------------------------
+
+static void end_drag(bool commit) {
+	if (g_dd.state == DragState::None) return;
+	KillTimer(g_container, TIMER_LONG_PRESS);
+	KillTimer(g_container, TIMER_DRAG_POLL);
+	bool dragging = (g_dd.state == DragState::Dragging);
+	DragContext dd = g_dd;
+	DropTarget t = g_target;
+	g_dd = {};
+	g_target = {};
+	g_overlay.hide();
+	g_ghost.hide();
+	if (!dd.float_hwnd && GetCapture() == g_container) ReleaseCapture();
+	if (!commit || !dragging) return;
+
+	if (dd.float_hwnd) {
+		// 浮いた窓の移動の操作中なので、操作が終わってから入れる
+		if (t.leaf && t.zone != DropZone::None) {
+			g_pending_dock = t;
+			PostMessageW(g_container, WM_APP_DOCK_FLOAT, (WPARAM)dd.float_hwnd, 0);
+		}
+		return;
+	}
+	if (t.leaf && t.zone != DropZone::None) {
+		move_key(g_root.get(), dd.key, t.leaf, t.zone, t.tab_index);
+		log(L"移動: " + dd.key);
+		relayout();
+		save_tree();
+	} else if (!t.inside && ui::DROP_OUTSIDE) {
+		POINT pt;
+		GetCursorPos(&pt);
+		float_panel(dd.key, &pt);
+	}
+}
+
+static void begin_drag() {
+	g_dd.state = DragState::Dragging;
+	show_drop_overlay();
+	HFONT font = g_font;
+	g_ghost.show(g_main, g_dd.title, font, style_color("GroupingSelect", RGB(0x48, 0x48, 0x48)),
+		style_color("Text", RGB(0xff, 0xff, 0xff)), ui::DRAG_GHOST_ALPHA, tab_height());
+	POINT pt;
+	GetCursorPos(&pt);
+	update_drop_target(pt);
+	SetTimer(g_container, TIMER_DRAG_POLL, 30, nullptr);
+}
+
+// 浮いた窓の移動の操作を観察し、区画の上で放したら入れる
+static LRESULT CALLBACK float_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR) {
+	switch (msg) {
+		case WM_ENTERSIZEMOVE:
+			if (g_active && !g_busy && g_dd.state == DragState::None) {
+				FloatPanel* f = find_float(hwnd);
+				g_dd = {};
+				g_dd.state = DragState::Armed;
+				g_dd.float_hwnd = hwnd;
+				g_dd.key = f ? f->key : L"";
+				g_dd.title = window_text(hwnd);
+				GetCursorPos(&g_dd.down);
+			}
+			break;
+		case WM_MOVING:
+			if (g_dd.float_hwnd == hwnd) {
+				POINT pt;
+				GetCursorPos(&pt);
+				if (g_dd.state == DragState::Armed) {
+					g_dd.state = DragState::Dragging;
+					show_drop_overlay();
+				}
+				update_drop_target(pt);
+			}
+			break;
+		case WM_EXITSIZEMOVE:
+			if (g_dd.float_hwnd == hwnd) {
+				// Esc で取り消された移動では入れない
+				bool canceled = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+				end_drag(!canceled);
+			}
+			break;
+		case WM_NCDESTROY:
+			RemoveWindowSubclass(hwnd, float_subclass_proc, FLOAT_SUBCLASS_ID);
+			g_floats.erase(std::remove_if(g_floats.begin(), g_floats.end(), [&](const FloatPanel& f) { return f.hwnd == hwnd; }), g_floats.end());
+			break;
+	}
+	return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
+//---------------------------------------------------------------------
+//	ドッキング: 右クリックメニュー
+//---------------------------------------------------------------------
+
+static std::wstring panel_title(const std::wstring& key) {
+	for (auto& p : g_panels) if (p.key == key) return p.title;
+	return key;
+}
+
+// 区画の呼び名 (「他の区画へ移動」の一覧用)
+static std::wstring area_name(Node* leaf, int empty_no) {
+	if (!leaf->active.empty()) return format_s(ui::AREA_NAME_FORMAT, panel_title(leaf->active));
+	wchar_t buf[128];
+	swprintf_s(buf, ui::AREA_NAME_EMPTY, empty_no);
+	return buf;
+}
+
+static void show_tab_menu(Node* leaf, const std::wstring& key, POINT screen) {
+	enum { ID_FLOAT = 1, ID_CLOSE, ID_SPLIT_L, ID_SPLIT_R, ID_SPLIT_T, ID_SPLIT_B, ID_AREA_CLOSE, ID_MOVE = 100 };
+	HMENU menu = CreatePopupMenu();
+	std::vector<Node*> others;
+	if (!key.empty()) {
+		AppendMenuW(menu, MF_STRING, ID_FLOAT, ui::TAB_FLOAT);
+		AppendMenuW(menu, MF_STRING, ID_CLOSE, ui::TAB_CLOSE);
+		HMENU move = CreatePopupMenu();
+		int empty_no = 0;
+		for_each_leaf(g_root.get(), [&](Node* l) {
+			if (l->active.empty()) empty_no++;
+			if (l == leaf) return;
+			AppendMenuW(move, MF_STRING, ID_MOVE + others.size(), area_name(l, empty_no).c_str());
+			others.push_back(l);
+		});
+		AppendMenuW(menu, MF_POPUP | (others.empty() ? MF_GRAYED : 0), (UINT_PTR)move, ui::TAB_MOVE_TO);
+	}
+	HMENU split = CreatePopupMenu();
+	AppendMenuW(split, MF_STRING, ID_SPLIT_L, ui::SPLIT_LEFT);
+	AppendMenuW(split, MF_STRING, ID_SPLIT_R, ui::SPLIT_RIGHT);
+	AppendMenuW(split, MF_STRING, ID_SPLIT_T, ui::SPLIT_TOP);
+	AppendMenuW(split, MF_STRING, ID_SPLIT_B, ui::SPLIT_BOTTOM);
+	AppendMenuW(menu, MF_POPUP, (UINT_PTR)split, ui::TAB_SPLIT);
+	if (leaf->panels.empty() && leaf != g_root.get()) {
+		AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+		AppendMenuW(menu, MF_STRING, ID_AREA_CLOSE, ui::AREA_CLOSE);
+	}
+
+	UINT cmd = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, screen.x, screen.y, 0, g_container, nullptr);
+	DestroyMenu(menu);
+
+	switch (cmd) {
+		case 0: return;
+		case ID_FLOAT: float_panel(key, nullptr); return;
+		case ID_CLOSE: close_panel(key); return;
+		case ID_SPLIT_L: split_leaf(leaf, DropZone::Left); break;
+		case ID_SPLIT_R: split_leaf(leaf, DropZone::Right); break;
+		case ID_SPLIT_T: split_leaf(leaf, DropZone::Top); break;
+		case ID_SPLIT_B: split_leaf(leaf, DropZone::Bottom); break;
+		case ID_AREA_CLOSE: close_leaf(g_root.get(), leaf); break;
+		default:
+			if (cmd >= ID_MOVE && cmd < ID_MOVE + others.size()) {
+				move_key(g_root.get(), key, others[cmd - ID_MOVE], DropZone::Center);
+			}
+			break;
+	}
+	relayout();
+	save_tree();
+}
+
+//---------------------------------------------------------------------
 //	監視 (安全装置)
 //---------------------------------------------------------------------
 
 static void watch() {
-	if (!g_active || g_busy) return;
+	if (!g_active || g_busy || g_dd.state != DragState::None) return;
 	bool changed = false;
 
-	// 本体側に持ち去られた・破棄されたパネルを外す
 	for (auto it = g_panels.begin(); it != g_panels.end();) {
+		// 本体側に持ち去られた・破棄されたパネルを外す
 		if (!IsWindow(it->hwnd) || GetParent(it->hwnd) != g_container) {
 			log(L"パネルが外部で移動・破棄された: " + it->key);
 			if (IsWindow(it->hwnd)) RemoveWindowSubclass(it->hwnd, panel_subclass_proc, PANEL_SUBCLASS_ID);
+			remove_key(g_root.get(), it->key);
 			it = g_panels.erase(it);
 			changed = true;
 			continue;
 		}
-		bool v = IsWindowVisible(it->hwnd) != FALSE;
-		if (v != it->visible) {
-			it->visible = v;
+		// 閉じられた (本体の「ウィンドウを閉じる」や「表示」メニュー) パネルは区画から外し、
+		// 非表示の浮いた窓として本体へ返す (再び開かれたら、新しいパネルと同じく浮いた窓で出る)
+		if (!IsWindowVisible(it->hwnd)) {
+			log(L"閉じられたパネルを区画から外す: " + it->key);
+			Panel p = *it;
+			it = g_panels.erase(it);
+			remove_key(g_root.get(), p.key);
+			// 再び開かれた時に照合できるよう、照合用の仮位置へ戻しておく
+			for (auto& s : g_slots) {
+				if (s.key != p.key) continue;
+				int w = p.float_rect.right - p.float_rect.left, h = p.float_rect.bottom - p.float_rect.top;
+				p.float_rect = { s.pt.x, s.pt.y, s.pt.x + w, s.pt.y + h };
+			}
+			release_panel(p);
 			changed = true;
+			continue;
 		}
 		++it;
 	}
@@ -429,7 +816,7 @@ static void watch() {
 		RECT r;
 		GetWindowRect(h, &r);
 		std::wstring key = match_slot(g_slots, { r.left, r.top });
-		g_floats.push_back({ h, key });
+		add_float(h, key);
 		log(L"新しく開かれたパネルを浮いた窓で出す: " + (key.empty() ? L"(照合できず)" : key) + L" '" + window_text(h) + L"'");
 		if (!key.empty()) move_float_to_center(h);
 	}
@@ -482,7 +869,7 @@ static void abort_enter(const std::wstring& reason, bool interactive) {
 	if (g_active) {
 		KillTimer(g_container, TIMER_WATCH);
 		release_all_panels();
-		g_floats.clear();
+		clear_floats();
 		detach_container();
 		g_active = false;
 	}
@@ -626,7 +1013,7 @@ static bool enter_dock(bool interactive) {
 				return false;
 			}
 		} else {
-			g_floats.push_back({ h, key });
+			add_float(h, key);
 			auto it = g_settings.floating.find(key);
 			if (it != g_settings.floating.end()) {
 				const RECT& fr = it->second;
@@ -648,6 +1035,7 @@ static void exit_dock(bool apply_return) {
 	if (!g_active) return;
 	BusyGuard busy;
 	log(L"===== 無効化 =====");
+	end_drag(false);
 	KillTimer(g_container, TIMER_WATCH);
 	save_tree();
 
@@ -663,7 +1051,7 @@ static void exit_dock(bool apply_return) {
 		GetWindowRect(f.hwnd, &r);
 		g_settings.floating[f.key] = r;
 	}
-	g_floats.clear();
+	clear_floats();
 
 	release_all_panels();
 	detach_container();
@@ -807,7 +1195,7 @@ static void reset_tree() {
 		for (auto it = g_panels.begin(); it != g_panels.end();) {
 			if (find_leaf_with(g_root.get(), it->key)) { ++it; continue; }
 			release_panel(*it);
-			g_floats.push_back({ it->hwnd, it->key });
+			add_float(it->hwnd, it->key);
 			move_float_to_center(it->hwnd);
 			it = g_panels.erase(it);
 		}
@@ -946,6 +1334,19 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				update_toggle_menu();
 			} else if (wp == TIMER_WATCH) {
 				watch();
+			} else if (wp == TIMER_LONG_PRESS) {
+				KillTimer(hwnd, TIMER_LONG_PRESS);
+				if (g_dd.state == DragState::Pressed) {
+					// 長押しが成立: ドラッグの準備ができたことを、カーソルとタブの影で知らせる
+					g_dd.state = DragState::Armed;
+					SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
+					g_ghost.show(g_main, g_dd.title, g_font, style_color("GroupingSelect", RGB(0x48, 0x48, 0x48)),
+						style_color("Text", RGB(0xff, 0xff, 0xff)), ui::DRAG_GHOST_ALPHA, tab_height());
+					SetTimer(hwnd, TIMER_DRAG_POLL, 30, nullptr);
+				}
+			} else if (wp == TIMER_DRAG_POLL) {
+				// Esc キーで取り消す
+				if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) end_drag(false);
 			} else if (wp == TIMER_REENTER) {
 				KillTimer(hwnd, TIMER_REENTER);
 				if (!g_main_destroying && g_main && IsWindow(g_main)) {
@@ -960,8 +1361,24 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 			relayout();
 			return 0;
 
+		case WM_APP_TOGGLE_DROP_STYLE:
+			g_settings.drop_style = (drop_style() == 0) ? 1 : 0;
+			g_settings.save();
+			notify(g_settings.drop_style == 0 ? ui::DROP_STYLE_COMPASS : ui::DROP_STYLE_REGION, MB_ICONINFORMATION);
+			return 0;
+		case WM_APP_DOCK_FLOAT: {
+			DropTarget t = g_pending_dock;
+			g_pending_dock = {};
+			if (g_active && !g_busy) dock_float((HWND)wp, t.leaf, t.zone, t.tab_index);
+			return 0;
+		}
+
 		case WM_SETCURSOR:
 			if (LOWORD(lp) == HTCLIENT && g_root) {
+				if (g_dd.state == DragState::Armed || g_dd.state == DragState::Dragging) {
+					SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
+					return TRUE;
+				}
 				POINT pt;
 				GetCursorPos(&pt);
 				ScreenToClient(hwnd, &pt);
@@ -975,25 +1392,33 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 
 		case WM_LBUTTONDOWN: {
 			POINT pt = { (short)LOWORD(lp), (short)HIWORD(lp) };
-			if (!g_root) return 0;
+			if (!g_root || !g_active) return 0;
 			if (Node* s = hit_splitter(g_root.get(), pt)) {
 				g_drag = s;
 				SetCapture(hwnd);
 				return 0;
 			}
 			for (auto& t : g_tab_hits) {
-				if (PtInRect(&t.rect, pt)) {
-					if (t.leaf->active != t.key) {
-						t.leaf->active = t.key;
-						relayout();
-						save_tree();
-					}
-					return 0;
+				if (!PtInRect(&t.rect, pt)) continue;
+				std::wstring key = t.key;
+				if (t.leaf->active != key) {
+					t.leaf->active = key;
+					relayout();
+					save_tree();
 				}
+				// 長押しでドラッグの準備に入る
+				g_dd = {};
+				g_dd.state = DragState::Pressed;
+				g_dd.key = key;
+				g_dd.title = panel_title(key);
+				GetCursorPos(&g_dd.down);
+				SetCapture(hwnd);
+				SetTimer(hwnd, TIMER_LONG_PRESS, ui::LONG_PRESS_MS, nullptr);
+				return 0;
 			}
 			return 0;
 		}
-		case WM_MOUSEMOVE:
+		case WM_MOUSEMOVE: {
 			if (g_drag) {
 				POINT pt = { (short)LOWORD(lp), (short)HIWORD(lp) };
 				const RECT& r = g_drag->rect;
@@ -1006,17 +1431,53 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 					relayout();
 					UpdateWindow(hwnd);
 				}
+				return 0;
+			}
+			if (g_dd.state == DragState::None || g_dd.float_hwnd) return 0;
+			POINT cur;
+			GetCursorPos(&cur);
+			int moved = std::max(std::abs(cur.x - g_dd.down.x), std::abs(cur.y - g_dd.down.y));
+			int threshold = scaled(ui::DRAG_START_PX);
+			if (g_dd.state == DragState::Pressed) {
+				// 長押しの前に動かした場合はドラッグにしない (誤ってパネルが外れるのを防ぐ)
+				if (moved > threshold) end_drag(false);
+			} else if (g_dd.state == DragState::Armed) {
+				if (moved > threshold) begin_drag();
+			} else if (g_dd.state == DragState::Dragging) {
+				g_ghost.move(cur);
+				update_drop_target(cur);
 			}
 			return 0;
+		}
 		case WM_LBUTTONUP:
-			if (g_drag) ReleaseCapture();
+			if (g_drag) {
+				ReleaseCapture();
+			} else if (g_dd.state != DragState::None && !g_dd.float_hwnd) {
+				end_drag(true);
+			}
 			return 0;
 		case WM_CAPTURECHANGED:
 			if (g_drag) {
 				g_drag = nullptr;
 				save_tree();
 			}
+			if (g_dd.state != DragState::None && !g_dd.float_hwnd) end_drag(false);
 			return 0;
+		case WM_RBUTTONUP: {
+			if (!g_root || !g_active || g_dd.state != DragState::None) return 0;
+			POINT pt = { (short)LOWORD(lp), (short)HIWORD(lp) };
+			POINT screen = pt;
+			ClientToScreen(hwnd, &screen);
+			for (auto& t : g_tab_hits) {
+				if (PtInRect(&t.rect, pt)) {
+					show_tab_menu(t.leaf, t.key, screen);
+					return 0;
+				}
+			}
+			// タブ以外 (タブ帯の空き・空き区画) では、分割と空き区画を閉じる操作のみ
+			if (Node* leaf = leaf_at(g_root.get(), pt)) show_tab_menu(leaf, L"", screen);
+			return 0;
+		}
 
 		case WM_ERASEBKGND:
 			return 1;
@@ -1069,6 +1530,7 @@ void dock_cleanup_legacy() {
 
 void dock_request_startup() { if (g_container) PostMessageW(g_container, WM_APP_STARTUP, 0, 0); }
 void dock_request_toggle() { if (g_container) PostMessageW(g_container, WM_APP_TOGGLE, 0, 0); }
+void dock_request_toggle_drop_style() { if (g_container) PostMessageW(g_container, WM_APP_TOGGLE_DROP_STYLE, 0, 0); }
 void dock_request_reset_tree() { if (g_container) PostMessageW(g_container, WM_APP_RESET_TREE, 0, 0); }
 void dock_request_choose_return_layout() { if (g_container) PostMessageW(g_container, WM_APP_CHOOSE_RETURN, 0, 0); }
 
