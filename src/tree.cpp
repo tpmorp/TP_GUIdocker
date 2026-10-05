@@ -46,7 +46,7 @@ std::wstring serialize_tree(const Node* n) {
 		swprintf_s(r, L"%.4f", n->ratio);
 		return std::wstring(n->vertical ? L"V(" : L"H(") + r + L"," + serialize_tree(n->a.get()) + L"," + serialize_tree(n->b.get()) + L")";
 	}
-	std::wstring s = L"L(" + encode(n->active) + L";";
+	std::wstring s = std::wstring(n->keep_empty ? L"E(" : L"L(") + encode(n->active) + L";";
 	for (size_t i = 0; i < n->panels.size(); i++) {
 		if (i) s += L"|";
 		s += encode(n->panels[i]);
@@ -73,7 +73,8 @@ struct Parser {
 		wchar_t kind = s[pos++];
 		if (!eat(L'(')) return nullptr;
 		auto n = std::make_unique<Node>();
-		if (kind == L'L') {
+		if (kind == L'L' || kind == L'E') {
+			n->keep_empty = (kind == L'E');
 			n->active = decode(until(L";)"));
 			if (!eat(L';')) return nullptr;
 			while (pos < s.size() && s[pos] != L')') {
@@ -207,6 +208,141 @@ void compute_layout(Node* n, const RECT& rc, int gap, int tab_h) {
 		n->tabs = { rc.left, rc.top, rc.right, std::min(rc.bottom, rc.top + tab_h) };
 		n->body = { rc.left, n->tabs.bottom, rc.right, rc.bottom };
 	}
+}
+
+//---------------------------------------------------------------------
+//	組み替え (ドッキング)
+//---------------------------------------------------------------------
+
+Node* leaf_at(Node* root, POINT pt) {
+	Node* found = nullptr;
+	for_each_leaf(root, [&](Node* l) {
+		if (!found && PtInRect(&l->rect, pt)) found = l;
+	});
+	return found;
+}
+
+// 葉の表示中タブを、葉に属するパネルへ補正する
+static void fix_active(Node* leaf) {
+	if (leaf->panels.empty()) {
+		leaf->active.clear();
+	} else if (std::find(leaf->panels.begin(), leaf->panels.end(), leaf->active) == leaf->panels.end()) {
+		leaf->active = leaf->panels.front();
+	}
+}
+
+void insert_key(Node* target, const std::wstring& key, DropZone zone, int tab_index) {
+	if (!target || target->is_split || zone == DropZone::None) return;
+	if (zone == DropZone::Center) {
+		auto& v = target->panels;
+		v.erase(std::remove(v.begin(), v.end(), key), v.end());
+		if (tab_index < 0 || tab_index > (int)v.size()) tab_index = (int)v.size();
+		v.insert(v.begin() + tab_index, key);
+		target->active = key;
+		target->keep_empty = false;
+		return;
+	}
+	// 葉をその場で分割に変える: 元の中身は一方の子へ、新しいパネルはもう一方の子へ
+	auto old_leaf = std::make_unique<Node>();
+	old_leaf->panels = std::move(target->panels);
+	old_leaf->active = std::move(target->active);
+	old_leaf->keep_empty = target->keep_empty;
+	auto new_leaf = std::make_unique<Node>();
+	new_leaf->panels = { key };
+	new_leaf->active = key;
+
+	target->panels.clear();
+	target->active.clear();
+	target->keep_empty = false;
+	target->is_split = true;
+	target->ratio = 0.5;
+	target->vertical = (zone == DropZone::Top || zone == DropZone::Bottom);
+	bool new_first = (zone == DropZone::Left || zone == DropZone::Top);
+	target->a = new_first ? std::move(new_leaf) : std::move(old_leaf);
+	target->b = new_first ? std::move(old_leaf) : std::move(new_leaf);
+}
+
+// 空いた葉を閉じる (根から再帰)。node 自身は閉じない (親が閉じる)
+static void collapse_rec(Node* node) {
+	if (!node || !node->is_split) return;
+	collapse_rec(node->a.get());
+	collapse_rec(node->b.get());
+	auto closable = [](const Node* n) { return !n->is_split && n->panels.empty() && !n->keep_empty; };
+	if (closable(node->a.get()) || closable(node->b.get())) {
+		// 残す側の中身で、この節をその場で置き換える
+		std::unique_ptr<Node> keep = closable(node->a.get()) ? std::move(node->b) : std::move(node->a);
+		*node = std::move(*keep);
+	}
+}
+
+void collapse_empty(Node* root) {
+	collapse_rec(root);
+}
+
+void move_key(Node* root, const std::wstring& key, Node* target, DropZone zone, int tab_index) {
+	Node* src = find_leaf_with(root, key);
+	if (!src || !target || target->is_split || zone == DropZone::None) return;
+	if (src == target) {
+		if (zone == DropZone::Center) {
+			// 同じ葉の中での並べ替え
+			auto& v = src->panels;
+			int from = (int)(std::find(v.begin(), v.end(), key) - v.begin());
+			v.erase(v.begin() + from);
+			if (tab_index > from) tab_index--;  // 自分を抜いた分だけ位置がずれる
+			if (tab_index < 0 || tab_index > (int)v.size()) tab_index = (int)v.size();
+			v.insert(v.begin() + tab_index, key);
+			src->active = key;
+			return;
+		}
+		// 自分1枚だけの葉を自分の端へ分割しても意味が無い
+		if (src->panels.size() == 1) return;
+	}
+	// 先に元の葉から外し (閉じるのは後)、それから入れる
+	auto& v = src->panels;
+	v.erase(std::remove(v.begin(), v.end(), key), v.end());
+	fix_active(src);
+	insert_key(target, key, zone, tab_index);
+	collapse_empty(root);
+}
+
+bool remove_key(Node* root, const std::wstring& key) {
+	Node* leaf = find_leaf_with(root, key);
+	if (!leaf) return false;
+	auto& v = leaf->panels;
+	v.erase(std::remove(v.begin(), v.end(), key), v.end());
+	fix_active(leaf);
+	collapse_empty(root);
+	return true;
+}
+
+Node* split_leaf(Node* leaf, DropZone side) {
+	if (!leaf || leaf->is_split || side == DropZone::None || side == DropZone::Center) return nullptr;
+	insert_key(leaf, L"", side);
+	// insert_key は新しい葉にキーを1つ入れるため、空き区画に作り直す
+	Node* fresh = (side == DropZone::Left || side == DropZone::Top) ? leaf->a.get() : leaf->b.get();
+	fresh->panels.clear();
+	fresh->active.clear();
+	fresh->keep_empty = true;
+	return fresh;
+}
+
+void close_leaf(Node* root, Node* leaf) {
+	if (!leaf || leaf->is_split || !leaf->panels.empty()) return;
+	leaf->keep_empty = false;
+	collapse_empty(root);
+}
+
+RECT drop_preview_rect(const Node* t, DropZone zone, int gap) {
+	RECT r = t->rect;
+	int w = r.right - r.left, h = r.bottom - r.top;
+	switch (zone) {
+		case DropZone::Left:   r.right = r.left + (w - gap) / 2; break;
+		case DropZone::Right:  r.left = r.right - (w - gap) / 2; break;
+		case DropZone::Top:    r.bottom = r.top + (h - gap) / 2; break;
+		case DropZone::Bottom: r.top = r.bottom - (h - gap) / 2; break;
+		default: break;
+	}
+	return r;
 }
 
 } // namespace tpgd

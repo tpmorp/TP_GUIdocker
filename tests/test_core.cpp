@@ -61,6 +61,92 @@ int wmain(int argc, wchar_t** argv) {
 	CHECK(found && found->body.top == found->rect.top + 24);
 	CHECK(default_leaf(t.get()) == find_leaf_with(t.get(), L"setting"));
 
+	// 組み替え: 初期配置 (左: scene.list / 中央: preview / 右: setting / 下: edit)
+	{
+		auto r = default_tree();
+		compute_layout(r.get(), { 0, 0, 1000, 600 }, 7, 24);
+		Node* center = find_leaf_with(r.get(), L"preview");
+		Node* right = find_leaf_with(r.get(), L"setting");
+
+		// タブとして重ねる
+		move_key(r.get(), L"scene.list", right, DropZone::Center);
+		Node* rl = find_leaf_with(r.get(), L"setting");
+		CHECK(rl && rl->panels.size() == 2 && rl->active == L"scene.list");
+		// 左の葉は空になって閉じ、葉は3つになる
+		int leaves = 0;
+		for_each_leaf(r.get(), [&](Node*) { leaves++; });
+		CHECK(leaves == 3);
+		CHECK(serialize_tree(r.get()).find(L"L(;)") == std::wstring::npos);
+
+		// 右へ分割して置く
+		compute_layout(r.get(), { 0, 0, 1000, 600 }, 7, 24);
+		center = find_leaf_with(r.get(), L"preview");
+		move_key(r.get(), L"scene.list", center, DropZone::Right);
+		Node* sl = find_leaf_with(r.get(), L"scene.list");
+		Node* pv = find_leaf_with(r.get(), L"preview");
+		CHECK(sl && pv && sl != pv && sl->panels.size() == 1);
+		compute_layout(r.get(), { 0, 0, 1000, 600 }, 7, 24);
+		sl = find_leaf_with(r.get(), L"scene.list");
+		pv = find_leaf_with(r.get(), L"preview");
+		CHECK(sl && pv && sl->rect.left > pv->rect.left);  // 右側に置かれた
+
+		// 同じ葉の中での並べ替え
+		Node* st = find_leaf_with(r.get(), L"setting");
+		insert_key(st, L"x1", DropZone::Center);
+		insert_key(st, L"x2", DropZone::Center);   // [setting, x1, x2]
+		move_key(r.get(), L"x2", st, DropZone::Center, 0);
+		st = find_leaf_with(r.get(), L"setting");
+		CHECK(st && st->panels.size() == 3 && st->panels[0] == L"x2" && st->panels[1] == L"setting");
+		move_key(r.get(), L"x2", st, DropZone::Center, 3);  // 末尾へ
+		st = find_leaf_with(r.get(), L"setting");
+		CHECK(st && st->panels.back() == L"x2");
+
+		// 1枚だけの葉を自分の端へ分割しても変わらない
+		std::wstring before = serialize_tree(r.get());
+		Node* e = find_leaf_with(r.get(), L"edit");
+		move_key(r.get(), L"edit", e, DropZone::Left);
+		CHECK(serialize_tree(r.get()) == before);
+
+		// 取り除くと空いた葉は閉じる
+		CHECK(remove_key(r.get(), L"scene.list"));
+		CHECK(find_leaf_with(r.get(), L"scene.list") == nullptr);
+		CHECK(serialize_tree(r.get()).find(L"L(;)") == std::wstring::npos);
+
+		// 空き区画は閉じずに残り、保存・復元できる
+		Node* pv2 = find_leaf_with(r.get(), L"preview");
+		Node* fresh = split_leaf(pv2, DropZone::Bottom);
+		CHECK(fresh && fresh->keep_empty && fresh->panels.empty());
+		collapse_empty(r.get());
+		std::wstring with_empty = serialize_tree(r.get());
+		CHECK(with_empty.find(L"E(;)") != std::wstring::npos);
+		auto restored = parse_tree(with_empty);
+		CHECK(restored && serialize_tree(restored.get()) == with_empty);
+		// 空き区画にパネルを入れると、普通の葉になる
+		compute_layout(r.get(), { 0, 0, 1000, 600 }, 7, 24);
+		Node* empty_leaf = nullptr;
+		for_each_leaf(r.get(), [&](Node* l) { if (l->keep_empty) empty_leaf = l; });
+		CHECK(empty_leaf != nullptr);
+		move_key(r.get(), L"x1", empty_leaf, DropZone::Center);
+		CHECK(serialize_tree(r.get()).find(L"E(") == std::wstring::npos);
+		// 空き区画を閉じる
+		Node* pv3 = find_leaf_with(r.get(), L"preview");
+		Node* fresh2 = split_leaf(pv3, DropZone::Left);
+		close_leaf(r.get(), fresh2);
+		CHECK(serialize_tree(r.get()).find(L"E(") == std::wstring::npos);
+
+		// 全部取り除いても根は残る
+		auto single = parse_tree(L"L(a;a)");
+		CHECK(remove_key(single.get(), L"a"));
+		CHECK(single && !single->is_split && single->panels.empty());
+
+		// 予告範囲
+		compute_layout(r.get(), { 0, 0, 1000, 600 }, 7, 24);
+		Node* ed = find_leaf_with(r.get(), L"edit");
+		RECT pr = drop_preview_rect(ed, DropZone::Left, 7);
+		CHECK(pr.left == ed->rect.left && pr.right < (ed->rect.left + ed->rect.right) / 2 + 1);
+		CHECK(leaf_at(r.get(), { ed->rect.left + 1, ed->rect.top + 1 }) == ed);
+	}
+
 	// レイアウトファイル: 読み込み→保存で内容が変わらない
 	if (argc >= 2) {
 		std::wstring src = argv[1];
