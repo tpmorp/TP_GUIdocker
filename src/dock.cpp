@@ -12,6 +12,7 @@
 #include "layout_file.h"
 #include "settings.h"
 #include "tree.h"
+#include "diag.h"
 
 #include <algorithm>
 #include <memory>
@@ -31,6 +32,7 @@ enum : UINT {
 	WM_APP_RESET_TREE,
 	WM_APP_CHOOSE_RETURN,
 	WM_APP_RELAYOUT,
+	WM_APP_DIAG,
 };
 
 enum : UINT_PTR {
@@ -800,6 +802,13 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 		case WM_APP_RELAYOUT:
 			if (g_active) relayout();
 			return 0;
+		case WM_APP_DIAG:
+			if (g_active) {
+				MessageBoxW(g_main, L"診断は自由分割を終了してから実行してください。", TPGD_NAME, MB_OK | MB_ICONINFORMATION);
+			} else {
+				diag_run(hwnd);
+			}
+			return 0;
 
 		case WM_TIMER:
 			if (wp == TIMER_STARTUP) {
@@ -816,6 +825,8 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				}
 			} else if (wp == TIMER_WATCH) {
 				watch();
+			} else if (wp == TIMER_DIAG_DIALOG) {
+				diag_on_timer(hwnd);
 			} else if (wp == TIMER_REENTER) {
 				KillTimer(hwnd, TIMER_REENTER);
 				if (!g_main_destroying && g_main && IsWindow(g_main)) {
@@ -930,6 +941,7 @@ void dock_request_enter() { if (g_container) PostMessageW(g_container, WM_APP_EN
 void dock_request_exit() { if (g_container) PostMessageW(g_container, WM_APP_EXIT, 0, 0); }
 void dock_request_reset_tree() { if (g_container) PostMessageW(g_container, WM_APP_RESET_TREE, 0, 0); }
 void dock_request_choose_return_layout() { if (g_container) PostMessageW(g_container, WM_APP_CHOOSE_RETURN, 0, 0); }
+void dock_request_diag() { if (g_container) PostMessageW(g_container, WM_APP_DIAG, 0, 0); }
 
 void dock_shutdown() {
 	if (g_active) exit_dock(g_main && IsWindow(g_main) && !g_main_destroying);

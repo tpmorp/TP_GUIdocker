@@ -20,6 +20,7 @@ void dock_request_enter();
 void dock_request_exit();
 void dock_request_reset_tree();
 void dock_request_choose_return_layout();
+void dock_request_diag();
 
 // プラグイン解放時
 void dock_shutdown();
