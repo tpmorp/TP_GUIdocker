@@ -125,6 +125,12 @@ constexpr const wchar_t* MENU_UNLOCK = L"レイアウトのロックを解除";
 constexpr const wchar_t* LOCK_BADGE = L"ロック中";
 // ロックしていない時、ワークスペースの帯の右端に出る表示 (クリックでロック) [実装済み]
 constexpr const wchar_t* UNLOCK_BADGE = L"ロック";
+// 「TP_GUIdocker」メニューの項目 (見本の画像を書き出す。指示用) [実装済み]
+constexpr const wchar_t* MENU_EXPORT_SAMPLES = L"見本を書き出す";
+// 見本を書き出した時の知らせ (%s は書き出し先) [実装済み]
+constexpr const wchar_t* EXPORT_DONE = L"見本を書き出しました。\n\n書き出し先: %s";
+// 無効中に見本を書き出そうとした時の知らせ [実装済み]
+constexpr const wchar_t* EXPORT_NEED_ACTIVE = L"見本は TP_GUIdockerの有効中に書き出せます。";
 
 //---------------------------------------------------------------------
 //	見た目 (数値で指定するもの。本体設定に連動する項目は host.cpp で読む)

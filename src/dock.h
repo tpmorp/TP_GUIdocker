@@ -30,6 +30,9 @@ void dock_request_maximize();
 
 // レイアウトのロックを切り替える
 void dock_request_toggle_lock();
+
+// 見本の画像を書き出す (指示用)
+void dock_request_export_samples();
 void dock_request_reset_tree();
 void dock_request_choose_return_layout();
 

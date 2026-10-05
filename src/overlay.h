@@ -42,6 +42,12 @@ public:
 	void show(HWND owner, const std::wstring& title, HFONT font, COLORREF face, COLORREF text, int alpha_percent, int height);
 	void move(POINT cursor);
 	void hide();
+	// 画面上の位置 (見本の書き出し用)
+	RECT rect() const {
+		RECT r = {};
+		if (hwnd_) GetWindowRect(hwnd_, &r);
+		return r;
+	}
 
 private:
 	HWND hwnd_ = nullptr;

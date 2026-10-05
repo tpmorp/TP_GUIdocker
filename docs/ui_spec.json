@@ -342,6 +342,24 @@
       "where": "ロックしていない時、ワークスペースの帯の右端に出る表示 (クリックでロック)",
       "value": "ロック",
       "status": "実装済み"
+    },
+    {
+      "id": "MENU_EXPORT_SAMPLES",
+      "where": "「TP_GUIdocker」メニューの項目 (見本の画像を書き出す。指示用)",
+      "value": "見本を書き出す",
+      "status": "実装済み"
+    },
+    {
+      "id": "EXPORT_DONE",
+      "where": "見本を書き出した時の知らせ (%s は書き出し先)",
+      "value": "見本を書き出しました。\n\n書き出し先: %s",
+      "status": "実装済み"
+    },
+    {
+      "id": "EXPORT_NEED_ACTIVE",
+      "where": "無効中に見本を書き出そうとした時の知らせ",
+      "value": "見本は TP_GUIdockerの有効中に書き出せます。",
+      "status": "実装済み"
     }
   ],
   "design": [

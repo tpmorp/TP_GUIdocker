@@ -43,6 +43,7 @@ enum : UINT {
 	WM_APP_WS_SWITCH,         // ワークスペースの切り替え (wParam: 番号)
 	WM_APP_MAXIMIZE,          // カーソルの下のパネルを最大化・元に戻す
 	WM_APP_TOGGLE_LOCK,       // レイアウトのロックの切り替え
+	WM_APP_EXPORT_SAMPLES,    // 見本の書き出し
 };
 
 enum : UINT_PTR {
@@ -1316,6 +1317,269 @@ static void toggle_lock() {
 }
 
 //---------------------------------------------------------------------
+//	見本の書き出し (指示用)
+//	場面を再現して画面を撮影し、各部分の位置と指示書の ID を samples.json に記録する。
+//	tools/make_samples.py がこれを読み、番号付きの見本 PDF を作る
+//---------------------------------------------------------------------
+
+namespace {
+
+struct SampleNote {
+	std::vector<std::wstring> ids;   // 指示書の ID
+	RECT rect;                       // 撮影画像の中の位置
+	std::wstring note;               // 補足
+};
+
+struct SampleScene {
+	std::wstring name;     // 場面名 (ファイル名にも使う)
+	std::wstring title;    // 見出し
+	std::vector<SampleNote> notes;
+};
+
+std::wstring json_escape(const std::wstring& s) {
+	std::wstring o;
+	for (wchar_t c : s) {
+		if (c == L'"' || c == L'\\') { o += L'\\'; o += c; }
+		else if (c == L'\n') o += L"\\n";
+		else o += c;
+	}
+	return o;
+}
+
+// 画面の矩形を撮影して BMP で保存する (重ね窓も写るよう CAPTUREBLT を使う)
+bool capture_to_bmp(const RECT& r, const std::wstring& path) {
+	int w = r.right - r.left, h = r.bottom - r.top;
+	if (w <= 0 || h <= 0) return false;
+	HDC screen = GetDC(nullptr);
+	HDC mem = CreateCompatibleDC(screen);
+	BITMAPINFO bi = {};
+	bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+	bi.bmiHeader.biWidth = w;
+	bi.bmiHeader.biHeight = h;   // 下から上 (BMP の標準)
+	bi.bmiHeader.biPlanes = 1;
+	bi.bmiHeader.biBitCount = 24;
+	bi.bmiHeader.biCompression = BI_RGB;
+	void* bits = nullptr;
+	HBITMAP bmp = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+	HGDIOBJ old = SelectObject(mem, bmp);
+	BitBlt(mem, 0, 0, w, h, screen, r.left, r.top, SRCCOPY | CAPTUREBLT);
+	GdiFlush();
+	SelectObject(mem, old);
+	DeleteDC(mem);
+	ReleaseDC(nullptr, screen);
+
+	DWORD stride = ((w * 3 + 3) & ~3);
+	DWORD image_size = stride * h;
+	BITMAPFILEHEADER fh = {};
+	fh.bfType = 0x4D42;
+	fh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+	fh.bfSize = fh.bfOffBits + image_size;
+	bool ok = false;
+	HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (f != INVALID_HANDLE_VALUE) {
+		DWORD wr = 0;
+		ok = WriteFile(f, &fh, sizeof(fh), &wr, nullptr) && WriteFile(f, &bi.bmiHeader, sizeof(bi.bmiHeader), &wr, nullptr) &&
+			WriteFile(f, bits, image_size, &wr, nullptr);
+		CloseHandle(f);
+	}
+	DeleteObject(bmp);
+	return ok;
+}
+
+// 画面の描き替えが終わるのを待つ
+void settle() {
+	for (int i = 0; i < 6; i++) {
+		MSG m;
+		while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
+			TranslateMessage(&m);
+			DispatchMessageW(&m);
+		}
+		Sleep(50);
+	}
+	GdiFlush();
+}
+
+} // namespace
+
+// 入れ物の座標の矩形を、撮影範囲 (origin 基準) の座標へ
+static RECT to_capture(RECT r, POINT origin) {
+	MapWindowPoints(g_container, nullptr, (POINT*)&r, 2);
+	OffsetRect(&r, -origin.x, -origin.y);
+	return r;
+}
+static RECT screen_to_capture(RECT r, POINT origin) {
+	OffsetRect(&r, -origin.x, -origin.y);
+	return r;
+}
+
+// 見本を撮る対象の葉 (プレビューの葉、無ければ最大の葉)
+static Node* sample_leaf() {
+	if (Node* l = find_leaf_with(g_root.get(), L"preview")) if (!IsRectEmpty(&l->rect)) return l;
+	Node* best = nullptr;
+	long area = -1;
+	for_each_leaf(g_root.get(), [&](Node* l) {
+		long a = (l->rect.right - l->rect.left) * (l->rect.bottom - l->rect.top);
+		if (a > area) { area = a; best = l; }
+	});
+	return best;
+}
+
+static Node* first_split(Node* n) {
+	if (!n || !n->is_split) return nullptr;
+	return n;
+}
+
+static void export_samples() {
+	if (!g_active) {
+		notify(ui::EXPORT_NEED_ACTIVE, MB_ICONINFORMATION);
+		return;
+	}
+	BusyGuard busy;
+	std::wstring dir = module_dir() + L"\\" TPGD_NAME L"_見本";
+	CreateDirectoryW(dir.c_str(), nullptr);
+	log(L"見本の書き出し: " + dir);
+
+	SetForegroundWindow(g_main);
+	RECT win;
+	GetWindowRect(g_main, &win);
+	POINT origin = { win.left, win.top };
+	std::vector<SampleScene> scenes;
+
+	auto shoot = [&](SampleScene& s) {
+		settle();
+		capture_to_bmp(win, dir + L"\\" + s.name + L".bmp");
+		scenes.push_back(s);
+	};
+
+	relayout();
+	Node* leaf = sample_leaf();
+	if (!leaf) return;
+
+	// 1. 通常の画面
+	{
+		SampleScene s{ L"01_normal", L"通常の画面", {} };
+		s.notes.push_back({ { L"WS_BAR_HEIGHT" }, to_capture(g_bar, origin), L"ワークスペースの帯" });
+		for (auto& w : g_ws_hits) {
+			if (w.index == g_settings.active_ws) {
+				s.notes.push_back({ { L"COLOR_WS_ACTIVE", L"WS_BUTTON_PADDING", L"WS_DEFAULT_NAME" }, to_capture(w.rect, origin), L"選択中のワークスペース" });
+			}
+		}
+		s.notes.push_back({ { L"WS_ADD" }, to_capture(g_ws_add, origin), L"ワークスペースの追加" });
+		s.notes.push_back({ { L"UNLOCK_BADGE", L"MENU_LOCK" }, to_capture(g_lock_rect, origin), L"ロック (クリックで切り替え)" });
+		s.notes.push_back({ { L"TAB_HEIGHT", L"COLOR_TABBAR" }, to_capture(leaf->tabs, origin), L"タブ帯" });
+		bool active_done = false, inactive_done = false;
+		for (auto& t : g_tab_hits) {
+			bool sel = (t.leaf->active == t.key);
+			if (sel && !active_done) {
+				s.notes.push_back({ { L"COLOR_TAB_ACTIVE", L"COLOR_TAB_TEXT", L"TAB_PADDING", L"FONT" }, to_capture(t.rect, origin), L"選択中のタブ" });
+				active_done = true;
+			} else if (!sel && !inactive_done) {
+				s.notes.push_back({ { L"COLOR_TAB_TEXT_OFF" }, to_capture(t.rect, origin), L"選択されていないタブ" });
+				inactive_done = true;
+			}
+		}
+		if (Node* sp = first_split(g_root.get())) {
+			s.notes.push_back({ { L"SEPARATOR", L"COLOR_SEPARATOR", L"MIN_PANE" }, to_capture(sp->splitter, origin), L"境界線 (ドラッグで大きさを変える)" });
+		}
+		shoot(s);
+	}
+
+	// 2. ドラッグ中 (十字ボタン式) と 3. ドラッグ中 (区画の領域式)
+	int saved_style = g_settings.drop_style;
+	for (int style = 0; style < 2; style++) {
+		g_settings.drop_style = style;
+		show_drop_overlay();
+		// 区画の中の位置を選んで、落とし先の表示を作る
+		POINT pt;
+		if (style == 0) {
+			auto buttons = compass_buttons(leaf);
+			const RECT& b = buttons[1].rect;  // 左のボタン
+			pt = { (b.left + b.right) / 2, (b.top + b.bottom) / 2 };
+		} else {
+			RECT r = leaf->rect;
+			MapWindowPoints(g_container, nullptr, (POINT*)&r, 2);
+			pt = { r.right - (r.right - r.left) / 10, (r.top + r.bottom) / 2 };  // 右端寄り
+		}
+		update_drop_target(pt);
+		SampleScene s{ style == 0 ? L"02_drag_compass" : L"03_drag_region",
+			style == 0 ? L"ドラッグ中 (十字ボタン式)" : L"ドラッグ中 (区画の領域式)", {} };
+		RECT preview = drop_preview_rect(leaf, style == 0 ? DropZone::Left : DropZone::Right, gap_size());
+		s.notes.push_back({ { L"DROP_HIGHLIGHT", L"DROP_ALPHA" }, to_capture(preview, origin), L"置かれる範囲の予告" });
+		if (style == 0) {
+			RECT all = {};
+			for (auto& b : compass_buttons(leaf)) UnionRect(&all, &all, &b.rect);
+			s.notes.push_back({ { L"COMPASS_BUTTON" }, screen_to_capture(all, origin), L"十字ボタン (中央: タブとして重ねる / 上下左右: その側に分割)" });
+		} else {
+			s.notes.push_back({ { L"REGION_EDGE" }, to_capture(leaf->rect, origin), L"区画の端から REGION_EDGE % 以内なら上下左右、それより内側ならタブとして重ねる" });
+		}
+		shoot(s);
+		g_overlay.hide();
+	}
+	g_settings.drop_style = saved_style;
+	g_target = {};
+
+	// 4. タブの影
+	if (!g_tab_hits.empty()) {
+		const TabHit& t = g_tab_hits.front();
+		RECT tr = t.rect;
+		MapWindowPoints(g_container, nullptr, (POINT*)&tr, 2);
+		g_ghost.show(g_main, panel_title(t.key), g_font, style_color("GroupingSelect", RGB(0x48, 0x48, 0x48)),
+			style_color("Text", RGB(0xff, 0xff, 0xff)), ui::DRAG_GHOST_ALPHA, tab_height());
+		g_ghost.move({ tr.right + scaled(40), tr.bottom + scaled(40) });
+		SampleScene s{ L"04_drag_ghost", L"長押しでドラッグの準備ができた時のタブの影", {} };
+		settle();
+		s.notes.push_back({ { L"DRAG_GHOST_ALPHA", L"LONG_PRESS_MS" }, screen_to_capture(g_ghost.rect(), origin), L"タブの影 (長押しが成立すると出る)" });
+		shoot(s);
+		g_ghost.hide();
+	}
+
+	// 5. 最大化とロック中
+	{
+		bool saved_lock = g_settings.locked;
+		std::wstring saved_max = g_max_key;
+		g_settings.locked = true;
+		g_max_key = leaf->active;
+		relayout();
+		Node* ml = find_leaf_with(g_root.get(), g_max_key);
+		SampleScene s{ L"05_maximize_lock", L"パネルの最大化とロック中", {} };
+		if (ml) s.notes.push_back({ { L"TAB_MAXIMIZE", L"TAB_RESTORE", L"MENU_MAXIMIZE" }, to_capture(ml->rect, origin), L"最大化したパネル (他の区画は隠れる)" });
+		s.notes.push_back({ { L"LOCK_BADGE", L"MENU_UNLOCK" }, to_capture(g_lock_rect, origin), L"ロック中の表示" });
+		shoot(s);
+		g_settings.locked = saved_lock;
+		g_max_key = saved_max;
+		relayout();
+	}
+
+	// 位置の記録 (UTF-8)
+	std::wstring js = L"{\n  \"version\": \"" TPGD_VERSION L"\",\n  \"scenes\": [\n";
+	for (size_t i = 0; i < scenes.size(); i++) {
+		auto& s = scenes[i];
+		js += L"    {\"name\": \"" + json_escape(s.name) + L"\", \"title\": \"" + json_escape(s.title) + L"\", \"image\": \"" +
+			json_escape(s.name) + L".bmp\", \"notes\": [\n";
+		for (size_t j = 0; j < s.notes.size(); j++) {
+			auto& n = s.notes[j];
+			js += L"      {\"ids\": [";
+			for (size_t k = 0; k < n.ids.size(); k++) js += (k ? L", \"" : L"\"") + json_escape(n.ids[k]) + L"\"";
+			wchar_t r[96];
+			swprintf_s(r, L"], \"rect\": [%ld, %ld, %ld, %ld], ", n.rect.left, n.rect.top, n.rect.right, n.rect.bottom);
+			js += r;
+			js += L"\"note\": \"" + json_escape(n.note) + L"\"}" + (j + 1 < s.notes.size() ? L",\n" : L"\n");
+		}
+		js += std::wstring(L"    ]}") + (i + 1 < scenes.size() ? L",\n" : L"\n");
+	}
+	js += L"  ]\n}\n";
+	std::string utf8 = wide_to_utf8(js);
+	HANDLE f = CreateFileW((dir + L"\\samples.json").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (f != INVALID_HANDLE_VALUE) {
+		DWORD wr = 0;
+		WriteFile(f, utf8.data(), (DWORD)utf8.size(), &wr, nullptr);
+		CloseHandle(f);
+	}
+	log(L"見本の書き出しを終えた (" + std::to_wstring(scenes.size()) + L" 場面)");
+	notify(format_s(ui::EXPORT_DONE, dir), MB_ICONINFORMATION);
+}
+
+//---------------------------------------------------------------------
 //	メイン窓の監視
 //---------------------------------------------------------------------
 
@@ -1675,6 +1939,9 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 		case WM_APP_MAXIMIZE:
 			if (!g_busy) maximize_under_cursor();
 			return 0;
+		case WM_APP_EXPORT_SAMPLES:
+			if (!g_busy) export_samples();
+			return 0;
 		case WM_APP_TOGGLE_LOCK:
 			toggle_lock();
 			return 0;
@@ -1874,6 +2141,7 @@ void dock_request_toggle_drop_style() { if (g_container) PostMessageW(g_containe
 void dock_request_switch_workspace(int index) { if (g_container) PostMessageW(g_container, WM_APP_WS_SWITCH, (WPARAM)index, 0); }
 void dock_request_maximize() { if (g_container) PostMessageW(g_container, WM_APP_MAXIMIZE, 0, 0); }
 void dock_request_toggle_lock() { if (g_container) PostMessageW(g_container, WM_APP_TOGGLE_LOCK, 0, 0); }
+void dock_request_export_samples() { if (g_container) PostMessageW(g_container, WM_APP_EXPORT_SAMPLES, 0, 0); }
 void dock_request_reset_tree() { if (g_container) PostMessageW(g_container, WM_APP_RESET_TREE, 0, 0); }
 void dock_request_choose_return_layout() { if (g_container) PostMessageW(g_container, WM_APP_CHOOSE_RETURN, 0, 0); }
 

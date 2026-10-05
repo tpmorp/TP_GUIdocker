@@ -45,6 +45,7 @@ static void on_choose_return(EDIT_SECTION*) { dock_request_choose_return_layout(
 static void on_drop_style(EDIT_SECTION*) { dock_request_toggle_drop_style(); }
 static void on_maximize(EDIT_SECTION*) { dock_request_maximize(); }
 static void on_lock(EDIT_SECTION*) { dock_request_toggle_lock(); }
+static void on_export_samples(EDIT_SECTION*) { dock_request_export_samples(); }
 template <int N> static void on_workspace(EDIT_SECTION*) { dock_request_switch_workspace(N - 1); }
 
 // ワークスペース1〜9の切り替え項目 (本体のショートカットキー設定で割り当てられるよう、メニュー項目として登録する)
@@ -90,6 +91,8 @@ EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
 	static const std::wstring drop_name = std::wstring(TPGD_NAME L"\\") +
 		(style == 0 ? ui::MENU_DROP_STYLE_COMPASS : ui::MENU_DROP_STYLE_REGION);
 	host->register_edit_menu(drop_name.c_str(), on_drop_style);
+	static const std::wstring samples_name = std::wstring(TPGD_NAME L"\\") + ui::MENU_EXPORT_SAMPLES;
+	host->register_edit_menu(samples_name.c_str(), on_export_samples);
 
 	// 本体の起動完了後に、前回の状態を引き継ぐ
 	dock_request_startup();
