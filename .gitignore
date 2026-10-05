@@ -1,0 +1,11 @@
+# ビルド生成物
+out/
+*.obj
+*.exp
+*.lib
+*.pdb
+*.ilk
+
+# 個人環境のバックアップ・調査結果
+backup/
+tools/probe_result_*.txt
