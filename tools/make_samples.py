@@ -93,77 +93,115 @@ def draw_badge(d, x, y, n, r=18):
     d.text((x - w / 2, y - 15), s, fill="white", font=f)
 
 
-def draw_legend(d, rows, top, spec):
-    """rows: [(番号, [ID...], 補足)] を表にする"""
-    cols = [70, 300, 820, PAGE_W - 2 * MARGIN - 70 - 300 - 820]
-    heads = ["番号", "ID (指示書)", "項目・表示される場所", "現在の値"]
-    x0 = MARGIN
+def crop_detail(img, rect, box_w, box_h):
+    """rect の周りを切り出して拡大し、赤い枠を書き込んだ画像を返す"""
+    l, t, r, b = rect
+    w, h = max(1, r - l), max(1, b - t)
+    # 細長い部分 (帯・境界線) は全体を収めると縮みすぎるため、一部分を拡大して見せる
+    if w > h * 6:
+        r = l + min(w, max(h * 8, 240))     # 横長: 左端の部分
+    elif h > w * 6:
+        mid = (t + b) // 2                  # 縦長: 中央の部分
+        half = min(h, max(w * 8, 240)) // 2
+        t, b = mid - half, mid + half
+    w, h = max(1, r - l), max(1, b - t)
+    pad_x = max(60, w // 3)
+    pad_y = max(40, h // 3)
+    cl, ct = max(0, l - pad_x), max(0, t - pad_y)
+    cr, cb = min(img.width, r + pad_x), min(img.height, b + pad_y)
+    # 枠に合わせて縦横比をそろえる (足りない側を広げる)
+    want = box_w / box_h
+    cw, ch = cr - cl, cb - ct
+    if cw / ch < want:
+        extra = int(ch * want) - cw
+        cl, cr = max(0, cl - extra // 2), min(img.width, cr + extra - extra // 2)
+    else:
+        extra = int(cw / want) - ch
+        ct, cb = max(0, ct - extra // 2), min(img.height, cb + extra - extra // 2)
+    crop = img.crop((cl, ct, cr, cb))
+    scale = min(box_w / crop.width, box_h / crop.height)
+    crop = crop.resize((max(1, int(crop.width * scale)), max(1, int(crop.height * scale))), Image.LANCZOS)
+    d = ImageDraw.Draw(crop)
+    d.rectangle(((l - cl) * scale, (t - ct) * scale, (r - cl) * scale, (b - ct) * scale), outline=MARK, width=3)
+    return crop
+
+
+def detail_pages(scene, img, spec):
+    """番号ごとに拡大図と ID・項目・現在の値を並べる (収まらなければ次のページへ続ける)"""
+    pages = []
+    title = scene["title"] + " ― 拡大図と項目"
+    page, d = new_page(title, "番号ごとに、その部分の拡大図と、指示書の ID・項目・現在の値を示します。")
+    thumb_w, thumb_h = 420, 200
+    col_x = MARGIN + thumb_w + 40
+    cols = [300, 560, PAGE_W - MARGIN - col_x - 300 - 560]
     f, fb = font(18), font(18, bold=True)
-    y = top
-    d.rectangle((x0, y, PAGE_W - MARGIN, y + 34), fill=TABLE_HEAD)
-    x = x0
-    for w, h in zip(cols, heads):
-        d.text((x + 8, y + 6), h, fill="white", font=fb)
-        x += w
-    y += 34
-    for n, ids, note in rows:
-        first = True
-        for item_id in ids:
-            info = spec.get(item_id, {"label": "(指示書に無い項目)", "value": "", "kind": ""})
-            cells = ["", item_id, info["label"], info["value"]]
+    y = 124
+
+    def header(d, y):
+        d.rectangle((MARGIN, y, PAGE_W - MARGIN, y + 34), fill=TABLE_HEAD)
+        d.text((MARGIN + 8, y + 6), "拡大図", fill="white", font=fb)
+        x = col_x
+        for w, h in zip(cols, ["ID (指示書)", "項目・表示される場所", "現在の値"]):
+            d.text((x + 8, y + 6), h, fill="white", font=fb)
+            x += w
+        return y + 40
+
+    y = header(d, y)
+    for n, note in enumerate(scene["notes"], start=1):
+        # この番号の行の高さを見積もる
+        rows = []
+        for item_id in note["ids"]:
+            info = spec.get(item_id, {"label": "(指示書に無い項目)", "value": ""})
+            cells = [item_id, info["label"], info["value"]]
             wrapped = [wrap(d, c, f, w - 16) for c, w in zip(cells, cols)]
+            rows.append(wrapped)
+        text_h = sum(max(len(l) for l in r) * 24 + 10 for r in rows) + 34
+        block_h = max(thumb_h + 40, text_h)
+        if y + block_h > PAGE_H - MARGIN:
+            pages.append(page)
+            page, d = new_page(title + " (続き)")
+            y = header(d, 124)
+        crop = crop_detail(img, note["rect"], thumb_w, thumb_h)
+        page.paste(crop, (MARGIN, y))
+        d.rectangle((MARGIN - 1, y - 1, MARGIN + crop.width, y + crop.height), outline=TABLE_LINE)
+        draw_badge(d, MARGIN + 20, y + 20, n)
+        d.text((MARGIN, y + crop.height + 6), note.get("note", ""), fill=SUB, font=font(16))
+        ry = y
+        for wrapped in rows:
             h = max(len(l) for l in wrapped) * 24 + 10
-            if y + h > PAGE_H - MARGIN:
-                return y  # 収まらない分は省く (場面の数が少ないため通常は収まる)
-            x = x0
+            x = col_x
             for lines, w in zip(wrapped, cols):
                 for i, line in enumerate(lines):
-                    d.text((x + 8, y + 5 + i * 24), line, fill=INK, font=f)
+                    d.text((x + 8, ry + 5 + i * 24), line, fill=INK, font=f)
                 x += w
-            if first and n:
-                draw_badge(d, x0 + 30, y + 17, n, r=14)
-            y += h
-            d.line((x0, y, PAGE_W - MARGIN, y), fill=TABLE_LINE, width=1)
-            first = False
-        if note:
-            lines = wrap(d, "補足: " + note, font(16), PAGE_W - 2 * MARGIN - 90)
-            for line in lines:
-                d.text((x0 + 78, y + 2), line, fill=SUB, font=font(16))
-                y += 22
-            y += 4
-            d.line((x0, y, PAGE_W - MARGIN, y), fill=TABLE_LINE, width=1)
-    return y
+            ry += h
+            d.line((col_x, ry, PAGE_W - MARGIN, ry), fill=TABLE_LINE, width=1)
+        y += block_h
+        d.line((MARGIN, y - 8, PAGE_W - MARGIN, y - 8), fill=(160, 160, 160), width=2)
+    pages.append(page)
+    return pages
 
 
-def scene_page(scene, folder, spec):
+def scene_pages(scene, folder, spec):
     img = Image.open(folder / scene["image"]).convert("RGB")
-    page, d = new_page(scene["title"], "撮影した実際の画面です。赤い枠と番号は、下の表の項目に対応します。")
-    area_top, area_h = 124, 640
+    page, d = new_page(scene["title"], "撮影した実際の画面です。赤い枠と番号の詳細は、次のページの拡大図と項目を見てください。")
+    area_top, area_h = 124, PAGE_H - 124 - MARGIN
     scale = min((PAGE_W - 2 * MARGIN) / img.width, area_h / img.height)
     sw, sh = int(img.width * scale), int(img.height * scale)
     shown = img.resize((sw, sh), Image.LANCZOS)
     ox = (PAGE_W - sw) // 2
     page.paste(shown, (ox, area_top))
     d.rectangle((ox - 1, area_top - 1, ox + sw, area_top + sh), outline=TABLE_LINE, width=1)
-
-    rows = []
     for i, note in enumerate(scene["notes"], start=1):
         l, t, r, b = note["rect"]
-        x1, y1 = ox + l * scale, area_top + t * scale
-        x2, y2 = ox + r * scale, area_top + b * scale
-        x1, x2 = max(ox, x1), min(ox + sw, x2)
-        y1, y2 = max(area_top, y1), min(area_top + sh, y2)
-        if x2 - x1 < 4:
-            x2 = x1 + 4
-        if y2 - y1 < 4:
-            y2 = y1 + 4
+        x1, y1 = max(ox, ox + l * scale), max(area_top, area_top + t * scale)
+        x2, y2 = min(ox + sw, ox + r * scale), min(area_top + sh, area_top + b * scale)
+        x2, y2 = max(x2, x1 + 4), max(y2, y1 + 4)
         d.rectangle((x1, y1, x2, y2), outline=MARK, width=3)
         bx = min(max(x1, ox + 18), ox + sw - 18)
         by = min(max(y1, area_top + 18), area_top + sh - 18)
         draw_badge(d, bx, by, i)
-        rows.append((i, note["ids"], note.get("note", "")))
-    draw_legend(d, rows, area_top + sh + 16, spec)
-    return page
+    return [page] + detail_pages(scene, img, spec)
 
 
 # ---------------------------------------------------------------------
@@ -391,7 +429,7 @@ def main():
     spec = load_spec()
     pages = [cover_page(folder, data.get("version", ""))]
     for scene in data["scenes"]:
-        pages.append(scene_page(scene, folder, spec))
+        pages.extend(scene_pages(scene, folder, spec))
     pages.append(menus_page(spec))
     pages.append(workspace_page(spec))
     pages.extend(messages_pages(spec))
