@@ -7,4 +7,4 @@ if not exist out mkdir out
 cl /nologo /std:c++20 /O2 /EHsc /utf-8 /MT /LD /DUNICODE /D_UNICODE ^
    /I "..\third_party\aviutl2_sdk\include\aviutl2_sdk" ^
    TP_GUIdocker.cpp /Fo:out\ /Fe:out\TP_GUIdocker.aux2 ^
-   /link user32.lib gdi32.lib
+   /link user32.lib gdi32.lib comctl32.lib

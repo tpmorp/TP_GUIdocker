@@ -9,3 +9,4 @@ out/
 # 個人環境のバックアップ・調査結果
 backup/
 tools/probe_result_*.txt
+*.log

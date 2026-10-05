@@ -5,6 +5,7 @@
 //	2. 本体のレイアウト機能を使い、全パネルの切り離し～取り込みを自動化できるかを検証する
 //----------------------------------------------------------------------------------
 #include <windows.h>
+#include <commctrl.h>
 #include <vector>
 #include <string>
 #include <fstream>
@@ -20,6 +21,8 @@
 #define WM_APP_RELEASE (WM_APP + 2)
 #define WM_APP_AUTO (WM_APP + 3)
 #define TIMER_CAPTURE_AFTER_LAYOUT 1
+#define TIMER_WATCH 2
+#define SUBCLASS_ID 0x7447
 
 static LOG_HANDLE* logger = nullptr;
 static HWND container = nullptr;
@@ -34,8 +37,36 @@ struct Captured {
 };
 static std::vector<Captured> captured;
 
+// 本プラグイン (DLL) が置かれたフォルダ
+static std::wstring module_dir() {
+	HMODULE self = nullptr;
+	GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+		(LPCWSTR)&module_dir, &self);
+	wchar_t path[MAX_PATH] = {};
+	GetModuleFileNameW(self, path, MAX_PATH);
+	std::wstring p = path;
+	p.resize(p.find_last_of(L'\\'));
+	return p;
+}
+
+// 本体のログ窓に加え、検証用に DLL と同じ場所の TP_GUIdocker.log へも書き出す
 static void log_info(const std::wstring& s) {
 	if (logger) logger->log(logger, s.c_str());
+	static std::wstring path = module_dir() + L"\\TP_GUIdocker.log";
+	SYSTEMTIME t;
+	GetLocalTime(&t);
+	wchar_t stamp[32];
+	swprintf_s(stamp, L"%02d:%02d:%02d.%03d ", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
+	std::wstring line = stamp + s + L"\r\n";
+	int len = WideCharToMultiByte(CP_UTF8, 0, line.c_str(), (int)line.size(), nullptr, 0, nullptr, nullptr);
+	std::string utf8(len, '\0');
+	WideCharToMultiByte(CP_UTF8, 0, line.c_str(), (int)line.size(), utf8.data(), len, nullptr, nullptr);
+	HANDLE f = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (f != INVALID_HANDLE_VALUE) {
+		DWORD written = 0;
+		WriteFile(f, utf8.data(), (DWORD)utf8.size(), &written, nullptr);
+		CloseHandle(f);
+	}
 }
 
 static std::wstring describe(HWND h) {
@@ -211,6 +242,180 @@ static bool generate_layout_file() {
 }
 
 //---------------------------------------------------------------------
+//	取り込み中パネルの判定
+//---------------------------------------------------------------------
+
+// h が取り込み中パネル自身、またはその子孫なら、そのパネルを返す
+static HWND captured_panel_of(HWND h) {
+	for (; h; h = GetParent(h)) {
+		for (auto& c : captured) if (c.hwnd == h) return h;
+	}
+	return nullptr;
+}
+
+//---------------------------------------------------------------------
+//	右クリックメニューの横取り (検証: 項目の記録と「統合」の阻止)
+//	本体 exe の取り込みアドレス表 (IAT) の TrackPopupMenu / TrackPopupMenuEx を差し替える
+//---------------------------------------------------------------------
+
+using TrackPopupMenuEx_t = BOOL(WINAPI*)(HMENU, UINT, int, int, HWND, LPTPMPARAMS);
+using TrackPopupMenu_t = BOOL(WINAPI*)(HMENU, UINT, int, int, int, HWND, const RECT*);
+static TrackPopupMenuEx_t orig_TrackPopupMenuEx = nullptr;
+static TrackPopupMenu_t orig_TrackPopupMenu = nullptr;
+
+static void log_menu_items(HMENU menu, int depth) {
+	int n = GetMenuItemCount(menu);
+	for (int i = 0; i < n; i++) {
+		MENUITEMINFOW mii = { sizeof(mii) };
+		wchar_t text[256] = {};
+		mii.fMask = MIIM_FTYPE | MIIM_ID | MIIM_STRING | MIIM_SUBMENU | MIIM_STATE;
+		mii.dwTypeData = text;
+		mii.cch = 256;
+		GetMenuItemInfoW(menu, i, TRUE, &mii);
+		wchar_t buf[400];
+		swprintf_s(buf, L"[TP_GUIdocker]   %*s- id=%u type=0x%X state=0x%X '%s'%s", depth * 2, L"",
+			mii.wID, mii.fType, mii.fState, text, mii.hSubMenu ? L" (サブメニュー)" : L"");
+		log_info(buf);
+		if (mii.hSubMenu) log_menu_items(mii.hSubMenu, depth + 1);
+	}
+}
+
+static bool find_menu_text(HMENU menu, UINT id, std::wstring& out) {
+	int n = GetMenuItemCount(menu);
+	for (int i = 0; i < n; i++) {
+		HMENU sub = GetSubMenu(menu, i);
+		if (sub) {
+			if (find_menu_text(sub, id, out)) return true;
+		} else if (GetMenuItemID(menu, i) == id) {
+			wchar_t text[256] = {};
+			GetMenuStringW(menu, i, text, 256, MF_BYPOSITION);
+			out = text;
+			return true;
+		}
+	}
+	return false;
+}
+
+// メニュー表示の共通処理
+// 選択結果を受け取るため TPM_RETURNCMD を付けて表示し、呼び出し元の求める形で返す
+template <class F>
+static BOOL track_popup_common(HMENU menu, UINT flags, int x, int y, HWND hwnd, F call_orig) {
+	POINT pt = { x, y };
+	HWND panel = captured_panel_of(hwnd);
+	if (!panel) panel = captured_panel_of(WindowFromPoint(pt));
+	log_info(L"[TP_GUIdocker] メニュー表示 owner=" + describe(hwnd) + (panel ? L" (取り込み中パネル: " + describe(panel) + L")" : L""));
+	log_menu_items(menu, 0);
+
+	bool wants_cmd = (flags & TPM_RETURNCMD) != 0;
+	UINT cmd = (UINT)call_orig(flags | TPM_RETURNCMD);
+	if (cmd == 0) {
+		log_info(L"[TP_GUIdocker] メニュー選択なし");
+		return 0;
+	}
+	std::wstring text;
+	find_menu_text(menu, cmd, text);
+	log_info(L"[TP_GUIdocker] メニュー選択 id=" + std::to_wstring(cmd) + L" '" + text + L"'");
+
+	if (panel && text.find(L"統合") != std::wstring::npos) {
+		log_info(L"[TP_GUIdocker] 取り込み中パネルの「統合」を阻止");
+		return wants_cmd ? 0 : TRUE;
+	}
+	if (wants_cmd) return (BOOL)cmd;
+	// 本来の動作 (選択項目を WM_COMMAND で通知) を再現する
+	if (!(flags & TPM_NONOTIFY)) PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(cmd, 0), 0);
+	return TRUE;
+}
+
+static BOOL WINAPI hook_TrackPopupMenuEx(HMENU menu, UINT flags, int x, int y, HWND hwnd, LPTPMPARAMS params) {
+	return track_popup_common(menu, flags, x, y, hwnd,
+		[&](UINT f) { return orig_TrackPopupMenuEx(menu, f, x, y, hwnd, params); });
+}
+
+static BOOL WINAPI hook_TrackPopupMenu(HMENU menu, UINT flags, int x, int y, int reserved, HWND hwnd, const RECT* rect) {
+	return track_popup_common(menu, flags, x, y, hwnd,
+		[&](UINT f) { return orig_TrackPopupMenu(menu, f, x, y, reserved, hwnd, rect); });
+}
+
+// module の IAT 内で dll!func を指す項目を new_func に差し替え、元の関数を返す
+static void* patch_iat(HMODULE module, const char* dll, const char* func, void* new_func) {
+	auto base = (BYTE*)module;
+	auto dos = (IMAGE_DOS_HEADER*)base;
+	auto nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
+	auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+	if (!dir.VirtualAddress) return nullptr;
+	void* target = (void*)GetProcAddress(GetModuleHandleA(dll), func);
+	for (auto imp = (IMAGE_IMPORT_DESCRIPTOR*)(base + dir.VirtualAddress); imp->Name; imp++) {
+		if (_stricmp((char*)(base + imp->Name), dll) != 0) continue;
+		for (auto thunk = (IMAGE_THUNK_DATA*)(base + imp->FirstThunk); thunk->u1.Function; thunk++) {
+			if ((void*)thunk->u1.Function != target) continue;
+			DWORD old;
+			VirtualProtect(&thunk->u1.Function, sizeof(void*), PAGE_READWRITE, &old);
+			void* prev = (void*)thunk->u1.Function;
+			thunk->u1.Function = (ULONG_PTR)new_func;
+			VirtualProtect(&thunk->u1.Function, sizeof(void*), old, &old);
+			return prev;
+		}
+	}
+	return nullptr;
+}
+
+static void install_menu_hooks() {
+	HMODULE exe = GetModuleHandleW(nullptr);
+	orig_TrackPopupMenuEx = (TrackPopupMenuEx_t)patch_iat(exe, "user32.dll", "TrackPopupMenuEx", (void*)hook_TrackPopupMenuEx);
+	orig_TrackPopupMenu = (TrackPopupMenu_t)patch_iat(exe, "user32.dll", "TrackPopupMenu", (void*)hook_TrackPopupMenu);
+	log_info(std::wstring(L"[TP_GUIdocker] メニュー横取り TrackPopupMenuEx=") + (orig_TrackPopupMenuEx ? L"設置" : L"対象なし") +
+		L" TrackPopupMenu=" + (orig_TrackPopupMenu ? L"設置" : L"対象なし"));
+}
+
+static void uninstall_menu_hooks() {
+	HMODULE exe = GetModuleHandleW(nullptr);
+	if (orig_TrackPopupMenuEx) patch_iat(exe, "user32.dll", "TrackPopupMenuEx", (void*)orig_TrackPopupMenuEx);
+	if (orig_TrackPopupMenu) patch_iat(exe, "user32.dll", "TrackPopupMenu", (void*)orig_TrackPopupMenu);
+}
+
+//---------------------------------------------------------------------
+//	取り込み中パネルの観察 (検証: 移動操作の記録)
+//---------------------------------------------------------------------
+
+static LRESULT CALLBACK panel_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR) {
+	switch (msg) {
+		case WM_NCLBUTTONDOWN:
+			log_info(L"[TP_GUIdocker] 非クライアント領域クリック hit=" + std::to_wstring(wp) + L" " + describe(hwnd));
+			break;
+		case WM_SYSCOMMAND:
+			log_info(L"[TP_GUIdocker] システムコマンド 0x" + std::to_wstring(wp & 0xFFF0) + L" " + describe(hwnd));
+			break;
+		case WM_ENTERSIZEMOVE:
+			log_info(L"[TP_GUIdocker] 移動・サイズ変更開始 " + describe(hwnd));
+			break;
+		case WM_EXITSIZEMOVE:
+			log_info(L"[TP_GUIdocker] 移動・サイズ変更終了 " + describe(hwnd));
+			break;
+		case WM_LBUTTONDOWN:
+			log_info(L"[TP_GUIdocker] 左クリック x=" + std::to_wstring((short)LOWORD(lp)) + L" y=" + std::to_wstring((short)HIWORD(lp)) + L" " + describe(hwnd));
+			break;
+	}
+	return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
+// 取り込み中パネルが本体側へ持ち去られていないかを監視する (安全装置の原型)
+static void layout_children();
+static void watch_captured() {
+	bool changed = false;
+	for (auto it = captured.begin(); it != captured.end();) {
+		if (!IsWindow(it->hwnd) || GetParent(it->hwnd) != container) {
+			log_info(L"[TP_GUIdocker] 取り込み中パネルが外部で移動された: " + (IsWindow(it->hwnd) ? describe(it->hwnd) + L" 新しい親=" + describe(GetParent(it->hwnd)) : std::wstring(L"(破棄済み)")));
+			if (IsWindow(it->hwnd)) RemoveWindowSubclass(it->hwnd, panel_subclass_proc, SUBCLASS_ID);
+			it = captured.erase(it);
+			changed = true;
+		} else {
+			++it;
+		}
+	}
+	if (changed) layout_children();
+}
+
+//---------------------------------------------------------------------
 //	取り込み・返却
 //---------------------------------------------------------------------
 
@@ -262,15 +467,19 @@ static void capture_panels() {
 		DWORD err = GetLastError();
 		log_info(L"[TP_GUIdocker] 取り込み " + describe(h) + (GetParent(h) == container ? L" 成功" : L" 失敗 err=" + std::to_wstring(err)));
 		SetWindowPos(h, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+		SetWindowSubclass(h, panel_subclass_proc, SUBCLASS_ID, 0);
 	}
 	if (captured.empty()) return;
 	ShowWindow(container, SW_SHOW);
 	layout_children();
+	SetTimer(container, TIMER_WATCH, 1000, nullptr);
 }
 
 static void release_panels() {
+	if (container) KillTimer(container, TIMER_WATCH);
 	for (auto it = captured.rbegin(); it != captured.rend(); ++it) {
 		if (!IsWindow(it->hwnd)) continue;
+		RemoveWindowSubclass(it->hwnd, panel_subclass_proc, SUBCLASS_ID);
 		SetParent(it->hwnd, nullptr);
 		SetWindowLongPtrW(it->hwnd, GWL_STYLE, it->style);
 		SetWindowLongPtrW(it->hwnd, GWL_EXSTYLE, it->ex_style);
@@ -319,6 +528,8 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 			if (wp == TIMER_CAPTURE_AFTER_LAYOUT) {
 				KillTimer(hwnd, TIMER_CAPTURE_AFTER_LAYOUT);
 				capture_panels();
+			} else if (wp == TIMER_WATCH) {
+				watch_captured();
 			}
 			return 0;
 		case WM_SIZE: layout_children(); return 0;
@@ -341,7 +552,7 @@ static void on_auto(EDIT_SECTION*) { PostMessageW(container, WM_APP_AUTO, 0, 0);
 
 COMMON_PLUGIN_TABLE common_plugin_table = {
 	L"TP_GUIdocker",
-	L"TP_GUIdocker version 0.0.2 (段階0 技術検証版)",
+	L"TP_GUIdocker version 0.0.3 (段階0 技術検証版)",
 };
 
 EXTERN_C __declspec(dllexport) void InitializeLogger(LOG_HANDLE* handle) { logger = handle; }
@@ -354,14 +565,17 @@ EXTERN_C __declspec(dllexport) bool InitializePlugin(DWORD version) {
 	return true;
 }
 EXTERN_C __declspec(dllexport) void UninitializePlugin() {
+	uninstall_menu_hooks();
 	release_panels();
 	if (container) DestroyWindow(container);
 }
 EXTERN_C __declspec(dllexport) COMMON_PLUGIN_TABLE* GetCommonPluginTable(void) { return &common_plugin_table; }
 
 EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
+	log_info(L"[TP_GUIdocker] ===== 起動 version 0.0.3 =====");
 	// 本体がレイアウト一覧を読む前に専用レイアウトを用意しておく
 	generate_layout_file();
+	install_menu_hooks();
 
 	WNDCLASSEXW wc = {};
 	wc.cbSize = sizeof(wc);
