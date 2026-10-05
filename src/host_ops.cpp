@@ -123,13 +123,13 @@ void operate_other_dialog(HWND dlg) {
 		g_handled.push_back(dlg);
 		return;
 	}
-	// 作成時の上書き確認 (同名のレイアウトがある場合)
-	if (g_mode == Mode::Create && g_create_submitted) {
-		HWND yes = find_descendant(dlg, L"Button", L"はい", -1);
-		if (!yes) yes = find_descendant(dlg, L"Button", L"Yes", -1);
-		if (yes) {
-			log(L"上書きの確認に「はい」で答える: " + text);
-			press(dlg, yes);
+	// 作成時の上書き確認 (本体の表示: 「同名のレイアウトが存在しています 変更しますか？」 OK / キャンセル)
+	if (g_mode == Mode::Create && g_create_submitted && text.find(L"同名のレイアウト") != std::wstring::npos) {
+		HWND ok = find_descendant(dlg, L"Button", L"OK", -1);
+		if (!ok) ok = find_descendant(dlg, L"Button", L"はい", -1);
+		if (ok) {
+			log(L"上書きの確認に「OK」で答える");
+			press(dlg, ok);
 			g_handled.push_back(dlg);
 			return;
 		}

@@ -643,7 +643,11 @@ static void exit_dock(bool apply_return) {
 	// 浮いた窓のまま使っていたパネルの位置を記憶する (次回も浮いた窓で復元する)
 	g_settings.floating.clear();
 	for (auto& f : g_floats) {
-		if (f.key.empty() || !IsWindow(f.hwnd) || !IsWindowVisible(f.hwnd)) continue;
+		bool alive = IsWindow(f.hwnd) != FALSE;
+		bool visible = alive && IsWindowVisible(f.hwnd);
+		log(L"浮いた窓 " + (f.key.empty() ? L"(照合できず)" : f.key) + L": " +
+			(!alive ? L"破棄済み" : visible ? L"表示中 → 位置を記憶" : L"閉じられている → 記憶しない"));
+		if (f.key.empty() || !visible) continue;
 		RECT r;
 		GetWindowRect(f.hwnd, &r);
 		g_settings.floating[f.key] = r;
