@@ -1567,7 +1567,7 @@ const std::vector<FontCandidate>& font_candidates() {
 			L"Noto Sans JP と同じ字形。太さごとに別ファイルの形式" },
 		{ L"源暎ゴシック", { L"源暎ゴシックP", L"GenEi Gothic P", L"GenEiGothicP", L"源暎ゴシックP Regular", L"GenEiGothicP Regular" },
 			L"源ノ角ゴシックの派生。字面を詰めて引き締めた書体" },
-		{ L"LINE Seed JP", { L"LINE Seed JP", L"LINE Seed JP_OTF", L"LINE Seed JP_TTF", L"LINE Seed JP App_OTF", L"LINE Seed JP App_TTF" },
+		{ L"LINE Seed JP", { L"LINE Seed JP", L"LINE Seed JP_TTF Regular", L"LINE Seed JP_OTF Regular", L"LINE Seed JP_OTF", L"LINE Seed JP_TTF", L"LINE Seed JP App_OTF", L"LINE Seed JP App_TTF" },
 			L"LINE の企業書体。角に丸みのある現代的な書体。太さは4段階" },
 		{ L"IBM Plex Sans JP", { L"IBM Plex Sans JP" },
 			L"IBM の企業書体。理知的で少し柔らかい" },
