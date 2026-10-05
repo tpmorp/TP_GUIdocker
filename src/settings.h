@@ -8,10 +8,13 @@
 
 namespace tpgd {
 
-// 自動保存する「自由分割へ入る直前の本体配置」のレイアウト名
+// 自由分割に入る直前の本体配置 (本体の「レイアウトを作成」で本体自身に保存させる)
 constexpr const wchar_t* AUTO_RETURN_LAYOUT = TPGD_NAME L"_元の配置";
-// 自由分割用に生成するレイアウト名
+// 自由分割用のレイアウト (枠を本体に作らせ、中身をプラグインが書き換える)
 constexpr const wchar_t* DOCK_LAYOUT = TPGD_NAME;
+
+// 分割木の保存形式の版 (古い版の分割木は使わず初期配置にする)
+constexpr int TREE_VERSION = 2;
 
 struct Settings {
 	// [State]
@@ -24,9 +27,10 @@ struct Settings {
 
 	// [Tree]
 	std::wstring tree;             // 分割木 (空なら初期配置)
+	int tree_version = 0;
 
-	// [Panels] 窓の題名 → レイアウトのセクション名 (例: プレビュー編集 → preview)
-	std::map<std::wstring, std::wstring> title_to_key;
+	// [Floating] 自由分割中に浮いた窓のまま使っているパネル (セクション名 → 画面上の位置)
+	std::map<std::wstring, RECT> floating;
 
 	void load();
 	void save() const;

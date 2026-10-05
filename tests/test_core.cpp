@@ -8,6 +8,9 @@
 #include <sstream>
 #include "../src/tree.h"
 #include "../src/layout_file.h"
+#include "../src/dock_layout.h"
+#include "../src/common.h"
+#include <algorithm>
 
 using namespace tpgd;
 
@@ -107,6 +110,54 @@ int wmain(int argc, wchar_t** argv) {
 		CHECK(only_layout_keys);
 		CHECK(same_order);
 		printf("  取り出したセクション数=%zu (basic=%zu)\n", ex.sections.size(), basic.sections.size());
+	}
+
+	// 自由分割用レイアウトの生成 (本番の basic を土台にする)
+	if (argc >= 2) {
+		IniDoc base;
+		CHECK(base.load(argv[1]));
+		std::vector<std::wstring> want = { L"preview", L"edit", L"setting", L"scene.list" };
+		auto is_visible = [&](const std::wstring& k) { return std::find(want.begin(), want.end(), k) != want.end(); };
+		DockLayoutPlan plan = build_dock_layout(base, is_visible, { 100, 50 }, 960, 630);
+
+		bool explorer_untouched = true, others_floating = true, hide_ok = true;
+		std::vector<std::pair<int, int>> positions;
+		for (auto& s : plan.doc.sections) {
+			if (s.name.rfind("Window.", 0) != 0) continue;
+			const IniSection* orig = base.find(s.name);
+			if (is_explorer_section(s.name)) {
+				// 切り離しにしない (元の値のまま) ・非表示にする
+				if (s.get("floating") != orig->get("floating") || s.get("x") != orig->get("x")) explorer_untouched = false;
+				if (s.get("hide") != "1") explorer_untouched = false;
+				continue;
+			}
+			if (s.get("floating") != "1") others_floating = false;
+			std::wstring key = utf8_to_wide(s.name.substr(7));
+			if (s.get("hide") != (is_visible(key) ? "0" : "1")) hide_ok = false;
+			positions.push_back({ atoi(s.get("x").c_str()), atoi(s.get("y").c_str()) });
+		}
+		CHECK(explorer_untouched);
+		CHECK(others_floating);
+		CHECK(hide_ok);
+		auto sorted = positions;
+		std::sort(sorted.begin(), sorted.end());
+		CHECK(std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end());   // 位置が一意
+		CHECK(plan.slots.size() == positions.size());
+		CHECK(plan.visible_keys.size() == want.size());
+		// [Window] (メイン窓) は土台のまま
+		const IniSection* w0 = base.find("Window");
+		const IniSection* w1 = plan.doc.find("Window");
+		CHECK((w0 == nullptr) == (w1 == nullptr));
+		if (w0 && w1) CHECK(w0->lines == w1->lines);
+		// 照合: 各仮位置 (±2px) から正しいセクション名に戻る。離れた位置は照合しない
+		bool match_ok = true;
+		for (auto& slot : plan.slots) {
+			if (match_slot(plan.slots, slot.pt) != slot.key) match_ok = false;
+			if (match_slot(plan.slots, { slot.pt.x + 2, slot.pt.y - 2 }) != slot.key) match_ok = false;
+		}
+		CHECK(match_ok);
+		CHECK(match_slot(plan.slots, { 99999, 99999 }).empty());
+		CHECK(match_slot(plan.slots, { plan.slots[0].pt.x + 20, plan.slots[0].pt.y + 20 }).empty());
 	}
 
 	printf(failures ? "\n%d 件失敗\n" : "\nすべて成功\n", failures);

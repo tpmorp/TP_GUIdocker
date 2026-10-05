@@ -110,11 +110,12 @@ std::unique_ptr<Node> parse_tree(const std::wstring& s) {
 
 //---------------------------------------------------------------------
 //	初期配置 (After Effects 風)
-//	┌──────┬────────────┬──────┐
-//	│ 素材 │ プレビュー │ 設定 │
-//	├──────┴────────────┴──────┤
-//	│      タイムライン        │
-//	└──────────────────────────┘
+//	┌──────────┬────────────┬──────────────┐
+//	│シーン    │ プレビュー │ オブジェクト │
+//	│リスト    │ 編集       │ 設定         │
+//	├──────────┴────────────┴──────────────┤
+//	│ レイヤー編集                         │
+//	└──────────────────────────────────────┘
 //---------------------------------------------------------------------
 
 static std::unique_ptr<Node> leaf(std::vector<std::wstring> keys) {
@@ -134,10 +135,11 @@ static std::unique_ptr<Node> split(bool vertical, double ratio, std::unique_ptr<
 	return n;
 }
 
+// 本体標準パネルだけの最小構成 (他者製パネルは利用者が後から加える)
 std::unique_ptr<Node> default_tree() {
-	auto left = leaf({ L"scene.list", L"explorer:1", L"explorer:2", L"explorer:3", L"explorer:4", L"object.list", L"mark.list" });
-	auto center = leaf({ L"preview", L"scene.preview" });
-	auto right = leaf({ L"setting", L"setting.color", L"setting.text", L"setting.time", L"layer.setting" });
+	auto left = leaf({ L"scene.list" });
+	auto center = leaf({ L"preview" });
+	auto right = leaf({ L"setting" });
 	auto bottom = leaf({ L"edit" });
 	return split(true, 0.60,
 		split(false, 0.17, std::move(left), split(false, 0.76, std::move(center), std::move(right))),

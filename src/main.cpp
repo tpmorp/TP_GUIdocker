@@ -3,7 +3,6 @@
 //	プラグインの入口 (本体から呼ばれる関数とメニュー登録)
 //----------------------------------------------------------------------------------
 #include "common.h"
-#include "diag.h"
 #include "dock.h"
 #include "hooks.h"
 #include "settings.h"
@@ -43,15 +42,11 @@ static void on_enter(EDIT_SECTION*) { dock_request_enter(); }
 static void on_exit(EDIT_SECTION*) { dock_request_exit(); }
 static void on_reset(EDIT_SECTION*) { dock_request_reset_tree(); }
 static void on_choose_return(EDIT_SECTION*) { dock_request_choose_return_layout(); }
-static void on_diag(EDIT_SECTION*) { dock_request_diag(); }
 
 EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
 	log(L"===== 起動 version " TPGD_VERSION L" (本体 " + std::to_wstring(g_host_version) + L") =====");
 	g_settings.load();
-
-	// 本体がレイアウト一覧を読み込む前に、戻り先と自由分割用のレイアウトを用意する
-	dock_prepare_layouts();
-	diag_prepare();
+	dock_cleanup_legacy();
 	install_menu_hooks();
 	if (!dock_init()) return;
 
@@ -59,7 +54,6 @@ EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
 	host->register_edit_menu(TPGD_NAME L"\\自由分割を終了", on_exit);
 	host->register_edit_menu(TPGD_NAME L"\\配置を初期状態に戻す", on_reset);
 	host->register_edit_menu(TPGD_NAME L"\\戻り先レイアウトを選ぶ", on_choose_return);
-	host->register_edit_menu(TPGD_NAME L"\\診断: レイアウト読み込み試験", on_diag);
 
 	// 本体の起動完了後に、前回の状態を引き継ぐ
 	dock_request_startup();

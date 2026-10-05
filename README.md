@@ -14,7 +14,7 @@ AviUtl2 標準の画面は固定5区画で構成され、区画の数・分け�
 詳細は [docs/plan.md](docs/plan.md) を参照。
 
 ## 現状
-段階1（分割画面・境界線・設定保存・安全装置）を実装中。段階0の検証結果は [docs/plan.md](docs/plan.md) を参照。
+段階1'（再設計による作り直し）。設計は [docs/design.md](docs/design.md) を参照。
 
 ## 構成
 - `src/` — プラグイン本体のソース

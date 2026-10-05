@@ -1,21 +1,25 @@
 //----------------------------------------------------------------------------------
 //	自由分割画面 (入れ物・パネルの取り込みと返却・境界線・タブ・安全装置)
 //
-//	仕組み:
-//	1. 本体のレイアウト機能で全パネルを「切り離し」状態にする (生成した TP_GUIdocker.layout を適用)
-//	2. 切り離された独立窓を子窓化し、本体メイン窓の中に置いた入れ物へはめ込む
-//	3. 入れ物が分割木に従って各パネルの位置と大きさを決める
-//	4. 終了時は全パネルを返却し、戻り先レイアウトを本体に適用して標準の画面へ戻す
+//	仕組み (docs/design.md 第4章):
+//	1. 本体の「レイアウトを作成」を自動操作し、現在の配置を本体自身に保存させる (戻り先)
+//	2. それを土台に自由分割用レイアウトを生成し、本体に適用させて全パネルを切り離す
+//	   (適用中は本体のエラー表示を監視し、異常があれば直ちに元へ戻す)
+//	3. 切り離された窓を、与えた一意の位置で照合してセクション名を特定する
+//	4. 分割木に属するパネルを子窓化して入れ物へはめ込む。それ以外は浮いた窓のまま置く
+//	5. 終了時は全パネルを返却し、戻り先レイアウトを適用して標準の画面へ戻す
 //----------------------------------------------------------------------------------
 #include "dock.h"
+#include "dock_layout.h"
 #include "host.h"
+#include "host_ops.h"
 #include "layout_file.h"
 #include "settings.h"
 #include "tree.h"
-#include "diag.h"
 
 #include <algorithm>
 #include <memory>
+#include <set>
 
 namespace tpgd {
 
@@ -32,7 +36,6 @@ enum : UINT {
 	WM_APP_RESET_TREE,
 	WM_APP_CHOOSE_RETURN,
 	WM_APP_RELAYOUT,
-	WM_APP_DIAG,
 };
 
 enum : UINT_PTR {
@@ -45,11 +48,14 @@ constexpr UINT_PTR PANEL_SUBCLASS_ID = 0x7447;
 constexpr UINT_PTR MAIN_SUBCLASS_ID = 0x7448;
 constexpr int OFFSCREEN = -30000;   // 非表示タブのパネルを置く座標
 constexpr int MIN_PANE = 60;        // 分割の最小サイズ (96dpi 換算)
+constexpr int FLOAT_W = 640;        // 切り離し窓の既定の大きさ (96dpi 換算)
+constexpr int FLOAT_H = 420;
 
 //---------------------------------------------------------------------
 //	状態
 //---------------------------------------------------------------------
 
+// 入れ物に取り込んだパネル
 struct Panel {
 	HWND hwnd = nullptr;
 	std::wstring key;         // レイアウトのセクション名 (例: preview)
@@ -60,6 +66,12 @@ struct Panel {
 	RECT float_rect = {};     // 取り込み前の位置
 	RECT assigned = {};       // 入れ物内の割り当て位置
 	bool visible = false;     // 最後に確認した表示状態
+};
+
+// 浮いた窓のまま置いているパネル
+struct FloatPanel {
+	HWND hwnd = nullptr;
+	std::wstring key;         // 照合できなかった場合は空
 };
 
 struct TabHit {
@@ -73,16 +85,16 @@ static HWND g_main = nullptr;
 static bool g_main_subclassed = false;
 static bool g_main_destroying = false;
 static bool g_active = false;
+static bool g_busy = false;            // 開始・終了の処理中 (重複実行を防ぐ)
 static bool g_moving = false;          // 自分で位置を変えている最中
 static int g_startup_tries = 0;
 
 static std::vector<Panel> g_panels;
+static std::vector<FloatPanel> g_floats;
 static std::unique_ptr<Node> g_root;
 static std::vector<TabHit> g_tab_hits;
-
-// 生成レイアウトで各セクションに与えた仮位置 (切り離し窓とセクション名の照合用)
-struct LayoutSlot { std::wstring key; POINT pt; };
-static std::vector<LayoutSlot> g_slots;
+static std::vector<LayoutSlot> g_slots;   // 照合用の仮位置
+static std::set<UINT> g_explorer_cmds;    // 「表示」→「メディアエクスプローラー」の項目番号
 
 // 境界線のドラッグ
 static Node* g_drag = nullptr;
@@ -91,14 +103,21 @@ static Node* g_drag = nullptr;
 static HFONT g_font = nullptr;
 static double g_scale = 1.0;
 
+// 処理中の印 (入れ子で使っても、抜けるときに元の値へ戻す)
+struct BusyGuard {
+	bool prev;
+	BusyGuard() : prev(g_busy) { g_busy = true; }
+	~BusyGuard() { g_busy = prev; }
+};
+
 //---------------------------------------------------------------------
 //	寸法・配色 (本体の style.conf に合わせる)
 //---------------------------------------------------------------------
 
+static int scaled(int v) { return (int)(v * g_scale + 0.5); }
 static int gap_size() { return style_size("WindowSeparatorSize", 7, g_scale); }
 static int tab_height() { return style_size("GroupTabHeight", 24, g_scale); }
 static int footer_height() { return style_size("FooterHeight", 24, g_scale); }
-static int min_pane() { return (int)(MIN_PANE * g_scale); }
 
 static void update_font() {
 	if (g_font) DeleteObject(g_font);
@@ -115,11 +134,16 @@ static void update_font() {
 }
 
 //---------------------------------------------------------------------
-//	パネル検索
+//	検索・保存
 //---------------------------------------------------------------------
 
 static Panel* find_panel(HWND h) {
 	for (auto& p : g_panels) if (p.hwnd == h) return &p;
+	return nullptr;
+}
+
+static FloatPanel* find_float(HWND h) {
+	for (auto& f : g_floats) if (f.hwnd == h) return &f;
 	return nullptr;
 }
 
@@ -136,140 +160,19 @@ static bool is_present(const std::wstring& key) {
 }
 
 static void save_tree() {
+	if (!g_root) return;
 	g_settings.tree = serialize_tree(g_root.get());
+	g_settings.tree_version = TREE_VERSION;
 	g_settings.save();
 }
 
-//---------------------------------------------------------------------
-//	レイアウトファイルの準備
-//---------------------------------------------------------------------
-
-static bool starts_with(const std::string& s, const char* prefix) {
-	return s.rfind(prefix, 0) == 0;
+static std::wstring layout_path(const std::wstring& name) {
+	return layout_dir() + L"\\" + name + L".layout";
 }
 
-void dock_prepare_layouts() {
-	std::wstring dir = layout_dir();
-	std::wstring return_path = dir + L"\\" + AUTO_RETURN_LAYOUT + L".layout";
-	std::wstring dock_path = dir + L"\\" + DOCK_LAYOUT + L".layout";
-
-	// aviutl2.ini には削除済みプラグインの古いセクションも残るため、
-	// 本体自身が保存したレイアウトファイル (利用者が作成したもの) に載っているセクションに絞る
-	// ※ 本体のレイアウトファイルが1つも無い場合は絞り込まない
-	std::vector<std::string> known;
-	for (auto& name : list_layouts()) {
-		if (name == DOCK_LAYOUT || name == AUTO_RETURN_LAYOUT) continue;
-		IniDoc d;
-		if (!d.load(dir + L"\\" + name + L".layout")) continue;
-		for (auto& s : d.sections) {
-			if (std::find(known.begin(), known.end(), s.name) == known.end()) known.push_back(s.name);
-		}
-	}
-	auto drop_unknown = [&](IniDoc& doc) {
-		if (known.empty()) return;
-		auto& secs = doc.sections;
-		for (auto it = secs.begin(); it != secs.end();) {
-			if (std::find(known.begin(), known.end(), it->name) == known.end()) {
-				log(L"古いセクションを除外: " + utf8_to_wide(it->name));
-				it = secs.erase(it);
-			} else {
-				++it;
-			}
-		}
-	};
-
-	// 本体の現在の配置 (前回終了時に本体が保存したもの) を読む ※読むだけで書き込まない
-	IniDoc ini;
-	IniDoc snapshot;
-	if (ini.load(app_data_dir() + L"\\aviutl2.ini")) snapshot = extract_layout(ini);
-	drop_unknown(snapshot);
-
-	// 表示中のパネルが全て切り離されている配置は、自由分割の名残であり通常の配置ではない
-	int visible = 0, floating = 0;
-	for (auto& s : snapshot.sections) {
-		if (s.get("hide") != "0") continue;
-		visible++;
-		if (s.get("floating") == "1") floating++;
-	}
-	bool snapshot_is_normal = visible > 0 && floating < visible;
-	if (!snapshot_is_normal) {
-		log(L"本体の配置が通常の状態ではない (表示 " + std::to_wstring(visible) + L" 枚中 " + std::to_wstring(floating) + L" 枚が切り離し)");
-	}
-
-	// 戻り先の自動保存: 前回が正常終了 (自由分割を正しく解除できた) で、通常の配置である場合のみ更新する
-	// 異常終了時の本体配置はパネルが切り離されたままの可能性があるため、上書きしない
-	IniDoc template_doc;
-	if (!g_settings.session_active && snapshot_is_normal) {
-		if (snapshot.save(return_path)) log(L"戻り先レイアウトを保存: " + return_path);
-		else log(L"戻り先レイアウトを保存できない: " + return_path);
-		template_doc = snapshot;
-	} else if (template_doc.load(return_path)) {
-		template_doc = extract_layout(template_doc);
-		drop_unknown(template_doc);
-		// 過去の版が書いた不要な項目・セクションを除いて保存し直す
-		template_doc.save(return_path);
-		log(L"戻り先レイアウトは更新せず、前回保存したものを使う");
-	} else {
-		template_doc = snapshot;
-	}
-	if (template_doc.sections.empty()) {
-		log(L"本体の配置情報が読めないため、自由分割用レイアウトを生成できない");
-		return;
-	}
-
-	// 自由分割用: 全パネルを切り離し状態にし、照合用に一意の仮位置を与える
-	// 表示・非表示は直前の本体配置を引き継ぐ (非表示のものも切り離し状態にしておくと、
-	// 後で「表示」メニューから開いた時に切り離し窓として現れ、自動で取り込める)
-	g_slots.clear();
-	int i = 0;
-	for (auto& s : template_doc.sections) {
-		if (!starts_with(s.name, "Window.")) continue;
-		int x = 24 + (i % 16) * 36;
-		int y = 24 + (i / 16) * 36;
-		s.set("floating", "1");
-		s.set("x", std::to_string(x));
-		s.set("y", std::to_string(y));
-		s.set("w", "480");
-		s.set("h", "320");
-		g_slots.push_back({ utf8_to_wide(s.name.substr(7)), { x, y } });
-		i++;
-	}
-	if (template_doc.save(dock_path)) log(L"自由分割用レイアウトを生成: " + dock_path + L" (" + std::to_wstring(i) + L" 枚)");
-	else log(L"自由分割用レイアウトを生成できない: " + dock_path);
-}
-
-// 切り離し窓のセクション名を決める
-static std::wstring identify_key(HWND h, std::vector<bool>& used) {
-	RECT r;
-	GetWindowRect(h, &r);
-	std::wstring title = window_text(h);
-
-	// 1. 生成レイアウトの仮位置との照合
-	int best = -1, best_dist = INT_MAX;
-	for (size_t i = 0; i < g_slots.size(); i++) {
-		if (used[i]) continue;
-		int d = abs(r.left - g_slots[i].pt.x) + abs(r.top - g_slots[i].pt.y);
-		if (d < best_dist) { best_dist = d; best = (int)i; }
-	}
-	int tolerance = (int)(16 * g_scale);
-	if (best >= 0 && best_dist <= tolerance) {
-		used[best] = true;
-		g_settings.title_to_key[title] = g_slots[best].key;
-		log(L"照合(位置) '" + title + L"' → " + g_slots[best].key + L" 誤差=" + std::to_wstring(best_dist));
-		return g_slots[best].key;
-	}
-
-	// 2. 過去に学習した題名との対応
-	auto it = g_settings.title_to_key.find(title);
-	if (it != g_settings.title_to_key.end()) {
-		log(L"照合(題名) '" + title + L"' → " + it->second +
-			L" (位置 " + std::to_wstring(r.left) + L"," + std::to_wstring(r.top) + L")");
-		return it->second;
-	}
-
-	// 3. 不明: 題名をそのまま識別名にする
-	log(L"照合できない '" + title + L"' 位置=" + std::to_wstring(r.left) + L"," + std::to_wstring(r.top));
-	return L"title:" + title;
+static void notify(const std::wstring& msg, UINT icon = MB_ICONWARNING) {
+	log(L"利用者へ通知: " + msg);
+	MessageBoxW(g_main, msg.c_str(), TPGD_NAME, MB_OK | icon);
 }
 
 //---------------------------------------------------------------------
@@ -294,7 +197,7 @@ static void relayout() {
 	g_tab_hits.clear();
 	HDC dc = GetDC(g_container);
 	HGDIOBJ old = SelectObject(dc, g_font);
-	int pad = (int)(10 * g_scale);
+	int pad = scaled(10);
 	for_each_leaf(g_root.get(), [&](Node* leaf) {
 		if (!is_present(leaf->active)) {
 			leaf->active.clear();
@@ -333,6 +236,16 @@ static void relayout() {
 	if (dwp) EndDeferWindowPos(dwp);
 	g_moving = false;
 	InvalidateRect(g_container, nullptr, TRUE);
+}
+
+// 浮いた窓を置く既定の位置 (メイン窓の中央)
+static void move_float_to_center(HWND h) {
+	RECT m, r;
+	GetWindowRect(g_main, &m);
+	GetWindowRect(h, &r);
+	int w = r.right - r.left, hgt = r.bottom - r.top;
+	int x = (m.left + m.right - w) / 2, y = (m.top + m.bottom - hgt) / 2;
+	SetWindowPos(h, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 //---------------------------------------------------------------------
@@ -376,12 +289,11 @@ static LRESULT CALLBACK panel_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPAR
 //	取り込み・返却
 //---------------------------------------------------------------------
 
-// activate: 取り込んだパネルを葉の表示中タブにするか (後から開かれたパネル向け)
-static bool capture_panel(HWND h, std::vector<bool>& used, bool activate) {
+static bool capture_panel(HWND h, const std::wstring& key) {
 	Panel p;
 	p.hwnd = h;
+	p.key = key;
 	p.title = window_text(h);
-	p.key = identify_key(h, used);
 	p.style = GetWindowLongPtrW(h, GWL_STYLE);
 	p.ex_style = GetWindowLongPtrW(h, GWL_EXSTYLE);
 	p.owner = GetWindow(h, GW_OWNER);
@@ -397,10 +309,9 @@ static bool capture_panel(HWND h, std::vector<bool>& used, bool activate) {
 	SetParent(h, g_container);
 	g_moving = false;
 	if (GetParent(h) != g_container) {
-		// 失敗: 元に戻す
 		SetWindowLongPtrW(h, GWL_STYLE, p.style);
 		SetWindowLongPtrW(h, GWL_EXSTYLE, p.ex_style);
-		log(L"取り込み失敗 " + describe(h) + L" err=" + std::to_wstring(GetLastError()));
+		log(L"取り込み失敗 " + key + L" " + describe(h) + L" err=" + std::to_wstring(GetLastError()));
 		return false;
 	}
 	p.assigned = { OFFSCREEN, OFFSCREEN, OFFSCREEN + 320, OFFSCREEN + 240 };
@@ -411,50 +322,63 @@ static bool capture_panel(HWND h, std::vector<bool>& used, bool activate) {
 	SetWindowPos(h, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 	g_moving = false;
 
-	// 分割木での置き場所: 既知なら元の葉、未知なら既定の葉へ追加する
-	// 表示中タブは、保存された選択を優先する (表示できない場合は relayout で補正される)
-	Node* leaf = find_leaf_with(g_root.get(), p.key);
-	if (!leaf) {
-		leaf = default_leaf(g_root.get());
-		if (leaf) leaf->panels.push_back(p.key);
+	if (Node* leaf = find_leaf_with(g_root.get(), key)) {
+		if (leaf->active.empty()) leaf->active = key;
 	}
-	if (leaf && (activate || leaf->active.empty())) leaf->active = p.key;
-	log(L"取り込み " + p.key + L" " + describe(h));
+	log(L"取り込み " + key + L" '" + p.title + L"'");
 	return true;
 }
 
-static int capture_floating_panels(bool activate) {
-	std::vector<bool> used(g_slots.size(), false);
-	// 既に取り込み済みのセクション名の仮位置は照合対象から外す
-	for (auto& p : g_panels) {
-		for (size_t i = 0; i < g_slots.size(); i++) if (g_slots[i].key == p.key) used[i] = true;
-	}
-	int n = 0;
-	for (HWND h : find_floating_panels(g_main)) {
-		if (find_panel(h)) continue;
-		if (capture_panel(h, used, activate)) n++;
-	}
-	return n;
+// 1枚を浮いた窓へ戻す
+static void release_panel(const Panel& p) {
+	HWND h = p.hwnd;
+	if (!IsWindow(h)) return;
+	RemoveWindowSubclass(h, panel_subclass_proc, PANEL_SUBCLASS_ID);
+	bool visible = IsWindowVisible(h) != FALSE;
+	g_moving = true;
+	SetParent(h, nullptr);
+	SetWindowLongPtrW(h, GWL_STYLE, (p.style & ~WS_VISIBLE) | (visible ? WS_VISIBLE : 0));
+	SetWindowLongPtrW(h, GWL_EXSTYLE, p.ex_style);
+	SetWindowLongPtrW(h, GWLP_HWNDPARENT, (LONG_PTR)p.owner);
+	SetWindowPos(h, nullptr, p.float_rect.left, p.float_rect.top,
+		p.float_rect.right - p.float_rect.left, p.float_rect.bottom - p.float_rect.top,
+		SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+	g_moving = false;
+	log(L"返却 " + p.key);
 }
 
 static void release_all_panels() {
-	g_moving = true;
-	for (auto it = g_panels.rbegin(); it != g_panels.rend(); ++it) {
-		HWND h = it->hwnd;
-		if (!IsWindow(h)) continue;
-		RemoveWindowSubclass(h, panel_subclass_proc, PANEL_SUBCLASS_ID);
-		bool visible = IsWindowVisible(h) != FALSE;
-		SetParent(h, nullptr);
-		SetWindowLongPtrW(h, GWL_STYLE, (it->style & ~WS_VISIBLE) | (visible ? WS_VISIBLE : 0));
-		SetWindowLongPtrW(h, GWL_EXSTYLE, it->ex_style);
-		SetWindowLongPtrW(h, GWLP_HWNDPARENT, (LONG_PTR)it->owner);
-		SetWindowPos(h, nullptr, it->float_rect.left, it->float_rect.top,
-			it->float_rect.right - it->float_rect.left, it->float_rect.bottom - it->float_rect.top,
-			SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-		log(L"返却 " + it->key);
-	}
-	g_moving = false;
+	for (auto it = g_panels.rbegin(); it != g_panels.rend(); ++it) release_panel(*it);
 	g_panels.clear();
+}
+
+// 入れ物をメイン窓の中へ置く / 外す
+static void attach_container() {
+	SetWindowLongPtrW(g_container, GWL_STYLE, WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
+	SetParent(g_container, g_main);
+	position_container();
+	ShowWindow(g_container, SW_SHOWNA);
+}
+
+static void detach_container() {
+	ShowWindow(g_container, SW_HIDE);
+	SetParent(g_container, nullptr);
+	SetWindowLongPtrW(g_container, GWL_STYLE, WS_POPUP | WS_CLIPCHILDREN);
+}
+
+//---------------------------------------------------------------------
+//	戻り先レイアウトの適用
+//---------------------------------------------------------------------
+
+// 標準の画面へ戻す。成功すれば true
+static bool restore_host_layout() {
+	if (!g_main || !IsWindow(g_main)) return false;
+	ApplyResult r = host_apply_layout(g_main, g_container, g_settings.effective_return_layout());
+	if (!r.ok() && !g_settings.return_layout.empty()) {
+		log(L"指定の戻り先で戻せないため、自動保存した配置で戻す");
+		r = host_apply_layout(g_main, g_container, AUTO_RETURN_LAYOUT);
+	}
+	return r.ok();
 }
 
 //---------------------------------------------------------------------
@@ -462,7 +386,7 @@ static void release_all_panels() {
 //---------------------------------------------------------------------
 
 static void watch() {
-	if (!g_active) return;
+	if (!g_active || g_busy) return;
 	bool changed = false;
 
 	// 本体側に持ち去られた・破棄されたパネルを外す
@@ -481,9 +405,18 @@ static void watch() {
 		}
 		++it;
 	}
+	g_floats.erase(std::remove_if(g_floats.begin(), g_floats.end(), [](const FloatPanel& f) { return !IsWindow(f.hwnd); }), g_floats.end());
 
-	// 「表示」メニュー等で新たに開かれたパネル (切り離し窓として現れる) を取り込む
-	if (capture_floating_panels(true) > 0) changed = true;
+	// 「表示」メニュー等で新たに開かれたパネルは、浮いた窓のまま (取り込まない) メイン窓の中央へ出す
+	for (HWND h : find_floating_panels(g_main)) {
+		if (find_panel(h) || find_float(h)) continue;
+		RECT r;
+		GetWindowRect(h, &r);
+		std::wstring key = match_slot(g_slots, { r.left, r.top });
+		g_floats.push_back({ h, key });
+		log(L"新しく開かれたパネルを浮いた窓で出す: " + (key.empty() ? L"(照合できず)" : key) + L" '" + window_text(h) + L"'");
+		if (!key.empty()) move_float_to_center(h);
+	}
 
 	if (changed) {
 		relayout();
@@ -503,8 +436,57 @@ static void subclass_main() {
 	g_main_subclassed = SetWindowSubclass(g_main, main_subclass_proc, MAIN_SUBCLASS_ID, 0) != FALSE;
 }
 
+// 「表示」→「メディアエクスプローラー」の項目番号を集める (自由分割中は開かせないため)
+static void collect_explorer_commands() {
+	g_explorer_cmds.clear();
+	HMENU bar = GetMenu(g_main);
+	if (!bar) return;
+	auto find_sub = [](HMENU m, const wchar_t* name) -> HMENU {
+		int n = GetMenuItemCount(m);
+		for (int i = 0; i < n; i++) {
+			wchar_t buf[256] = {};
+			GetMenuStringW(m, i, buf, 256, MF_BYPOSITION);
+			if (wcscmp(buf, name) == 0) return GetSubMenu(m, i);
+		}
+		return nullptr;
+	};
+	HMENU view = find_sub(bar, L"表示");
+	HMENU ex = view ? find_sub(view, L"メディアエクスプローラー") : nullptr;
+	if (!ex) return;
+	int n = GetMenuItemCount(ex);
+	for (int i = 0; i < n; i++) {
+		UINT id = GetMenuItemID(ex, i);
+		if (id != (UINT)-1 && id != 0) g_explorer_cmds.insert(id);
+	}
+}
+
+// 開始の途中で失敗した場合の後始末
+static void abort_enter(const std::wstring& reason, bool interactive) {
+	log(L"自由分割の開始を中止: " + reason);
+	if (g_active) {
+		KillTimer(g_container, TIMER_WATCH);
+		release_all_panels();
+		g_floats.clear();
+		detach_container();
+		g_active = false;
+	}
+	bool restored = restore_host_layout();
+	g_settings.session_active = false;
+	g_settings.save();
+	if (interactive) {
+		notify(L"自由分割を開始できませんでした。\n\n理由: " + reason +
+			(restored ? L"\n\n標準の画面に戻しました。" : L"\n\n「表示」→「レイアウト」から普段の配置を選んで戻してください。"));
+	}
+}
+
 static bool enter_dock(bool interactive) {
 	if (g_active) return true;
+	if (g_busy) {
+		log(L"処理中のため開始要求を見送る");
+		return false;
+	}
+	BusyGuard busy;
+
 	g_main = find_main_window();
 	if (!g_main) {
 		log(L"メインウィンドウが見つからないため開始できない");
@@ -536,94 +518,145 @@ static bool enter_dock(bool interactive) {
 		g_settings.save();
 	}
 
-	// 専用レイアウトが本体のメニューにあるか (初回は本体の再起動が必要)
-	bool has_dock = find_menu_command(g_main, { L"表示", L"レイアウト", DOCK_LAYOUT }) != 0;
-	bool has_return = find_menu_command(g_main, { L"表示", L"レイアウト", g_settings.effective_return_layout() }) != 0;
-	if (!has_dock || !has_return) {
-		log(L"専用レイアウトが本体のメニューに無い dock=" + std::to_wstring(has_dock) + L" return=" + std::to_wstring(has_return));
-		UINT restart = find_menu_command(g_main, { L"編集", L"アプリケーションを再起動" });
-		std::wstring msg = L"TP_GUIdocker の準備ができました。\n\n"
-			L"本体がレイアウト一覧を読み込み直す必要があるため、AviUtl2 の再起動が必要です (初回のみ)。";
-		if (interactive && restart) {
-			msg += L"\n\n今すぐ再起動しますか？ 再起動後、自動で自由分割になります。";
-			if (MessageBoxW(g_main, msg.c_str(), TPGD_NAME, MB_YESNO | MB_ICONINFORMATION) == IDYES) {
-				g_settings.resume = true;
-				g_settings.save();
-				PostMessageW(g_main, WM_COMMAND, MAKEWPARAM(restart, 0), 0);
-			}
-		} else if (interactive) {
-			MessageBoxW(g_main, msg.c_str(), TPGD_NAME, MB_OK | MB_ICONINFORMATION);
-		}
+	log(L"===== 自由分割を開始 =====");
+
+	// 前回が異常終了 (自由分割中の印が残っている) なら、まず本体の配置を正常に戻す
+	if (g_settings.session_active) {
+		log(L"前回の異常終了を検知。先に本体の配置を戻す");
+		restore_host_layout();
+		g_settings.session_active = false;
+		g_settings.save();
+	}
+
+	// 1. 現在の配置を本体自身に保存させる (戻り先)
+	if (!host_create_layout(g_main, g_container, AUTO_RETURN_LAYOUT)) {
+		abort_enter(L"現在の配置を本体に保存させることができませんでした。", interactive);
 		return false;
 	}
 
-	// 分割木を用意する
-	if (!g_root) {
-		g_root = parse_tree(g_settings.tree);
-		if (!g_root) g_root = default_tree();
+	// 2. 自由分割用レイアウトの枠を本体に作らせる (メニューに無い場合のみ)
+	if (!find_menu_command(g_main, { L"表示", L"レイアウト", DOCK_LAYOUT })) {
+		if (!host_create_layout(g_main, g_container, DOCK_LAYOUT)) {
+			abort_enter(L"自由分割用のレイアウトを本体に登録できませんでした。", interactive);
+			return false;
+		}
 	}
+
+	// 3. 分割木を用意する (古い形式の分割木は使わない)
+	if (!g_root) {
+		if (g_settings.tree_version == TREE_VERSION) g_root = parse_tree(g_settings.tree);
+		if (!g_root) {
+			g_root = default_tree();
+			log(L"分割木を初期配置で作成");
+		}
+	}
+
+	// 4. 自由分割用レイアウトの中身を生成する
+	IniDoc base;
+	if (!base.load(layout_path(AUTO_RETURN_LAYOUT))) {
+		abort_enter(L"保存した配置を読み込めませんでした。", interactive);
+		return false;
+	}
+	auto is_visible = [](const std::wstring& key) {
+		return find_leaf_with(g_root.get(), key) != nullptr || g_settings.floating.count(key) > 0;
+	};
+	RECT work = {};
+	MONITORINFO mi = { sizeof(mi) };
+	if (GetMonitorInfoW(MonitorFromWindow(g_main, MONITOR_DEFAULTTOPRIMARY), &mi)) work = mi.rcWork;
+	POINT origin = { work.left + scaled(40), work.top + scaled(40) };
+	DockLayoutPlan plan = build_dock_layout(base, is_visible, origin, scaled(FLOAT_W), scaled(FLOAT_H));
+	if (!plan.doc.save(layout_path(DOCK_LAYOUT))) {
+		abort_enter(L"自由分割用のレイアウトを書き出せませんでした。", interactive);
+		return false;
+	}
+	g_slots = plan.slots;
+	log(L"自由分割用レイアウトを生成 (切り離し " + std::to_wstring(plan.slots.size()) + L" 件, 表示 " +
+		std::to_wstring(plan.visible_keys.size()) + L" 件)");
 
 	g_settings.session_active = true;
 	g_settings.save();
-	log(L"===== 自由分割を開始 =====");
 
-	// 1. 全パネルを切り離す
-	if (!apply_host_layout(g_main, DOCK_LAYOUT)) {
-		g_settings.session_active = false;
-		g_settings.save();
+	// 5. 適用する (本体のエラー表示を監視)
+	ApplyResult applied = host_apply_layout(g_main, g_container, DOCK_LAYOUT);
+	if (!applied.ok()) {
+		abort_enter(applied.in_menu ? L"本体がレイアウトの読み込みに失敗しました。" : L"自由分割用のレイアウトがメニューに見つかりません。", interactive);
 		return false;
 	}
 
-	// 2. 入れ物をメイン窓の中へ置く
-	SetWindowLongPtrW(g_container, GWL_STYLE, WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
-	SetParent(g_container, g_main);
+	// 6. 照合: 表示すべきパネルが全て指定位置に現れたこと
+	std::vector<std::pair<std::wstring, HWND>> found;
+	for (HWND h : find_floating_panels(g_main)) {
+		RECT r;
+		GetWindowRect(h, &r);
+		std::wstring key = match_slot(g_slots, { r.left, r.top });
+		if (key.empty()) {
+			log(L"照合できない切り離し窓: '" + window_text(h) + L"'");
+			continue;
+		}
+		found.push_back({ key, h });
+	}
+	std::wstring missing;
+	for (auto& k : plan.visible_keys) {
+		bool ok = std::any_of(found.begin(), found.end(), [&](auto& f) { return f.first == k; });
+		if (!ok) missing += L" " + k;
+	}
+	if (!missing.empty()) {
+		abort_enter(L"一部のパネルが本体に切り離されませんでした (" + missing + L" )。", interactive);
+		return false;
+	}
+
+	// 7. 入れ物を置き、分割木のパネルを取り込む。それ以外は浮いた窓として記憶した位置へ
 	g_active = true;
-	position_container();
-	ShowWindow(g_container, SW_SHOWNA);
-
-	// 3. 切り離し窓を取り込む
-	int n = capture_floating_panels(false);
-	log(L"取り込み数=" + std::to_wstring(n));
-	if (n == 0) {
-		log(L"パネルを1枚も取り込めないため中止する (安全装置)");
-		exit_dock(true);
-		if (interactive) MessageBoxW(g_main, L"パネルを取り込めませんでした。標準の画面に戻します。", TPGD_NAME, MB_OK | MB_ICONWARNING);
-		return false;
+	attach_container();
+	for (auto& [key, h] : found) {
+		if (find_leaf_with(g_root.get(), key)) {
+			if (!capture_panel(h, key)) {
+				abort_enter(L"パネル (" + key + L") を取り込めませんでした。", interactive);
+				return false;
+			}
+		} else {
+			g_floats.push_back({ h, key });
+			auto it = g_settings.floating.find(key);
+			if (it != g_settings.floating.end()) {
+				const RECT& fr = it->second;
+				SetWindowPos(h, nullptr, fr.left, fr.top, fr.right - fr.left, fr.bottom - fr.top, SWP_NOZORDER | SWP_NOACTIVATE);
+			} else {
+				move_float_to_center(h);
+			}
+		}
 	}
-	// 照合できなかったパネルの仮の識別名 (title:...) のうち、今回いないものは分割木から除く
-	for_each_leaf(g_root.get(), [](Node* leaf) {
-		auto& v = leaf->panels;
-		v.erase(std::remove_if(v.begin(), v.end(), [](const std::wstring& k) {
-			if (k.rfind(L"title:", 0) != 0) return false;
-			for (auto& p : g_panels) if (p.key == k) return false;
-			return true;
-		}), v.end());
-	});
+	collect_explorer_commands();
 	relayout();
 	save_tree();
 	SetTimer(g_container, TIMER_WATCH, 300, nullptr);
+	log(L"自由分割を開始した (取り込み " + std::to_wstring(g_panels.size()) + L" 枚, 浮いた窓 " + std::to_wstring(g_floats.size()) + L" 枚)");
 	return true;
 }
 
 static void exit_dock(bool apply_return) {
 	if (!g_active) return;
+	BusyGuard busy;
 	log(L"===== 自由分割を終了 =====");
 	KillTimer(g_container, TIMER_WATCH);
-	if (g_root) save_tree();
+	save_tree();
+
+	// 浮いた窓のまま使っていたパネルの位置を記憶する (次回も浮いた窓で復元する)
+	g_settings.floating.clear();
+	for (auto& f : g_floats) {
+		if (f.key.empty() || !IsWindow(f.hwnd) || !IsWindowVisible(f.hwnd)) continue;
+		RECT r;
+		GetWindowRect(f.hwnd, &r);
+		g_settings.floating[f.key] = r;
+	}
+	g_floats.clear();
+
 	release_all_panels();
+	detach_container();
 	g_active = false;
 	g_drag = nullptr;
 
-	// 入れ物を外す
-	ShowWindow(g_container, SW_HIDE);
-	SetParent(g_container, nullptr);
-	SetWindowLongPtrW(g_container, GWL_STYLE, WS_POPUP | WS_CLIPCHILDREN);
-
-	// 戻り先レイアウトで標準の画面へ戻す
-	if (apply_return && g_main && IsWindow(g_main)) {
-		if (!apply_host_layout(g_main, g_settings.effective_return_layout()) && !g_settings.return_layout.empty()) {
-			apply_host_layout(g_main, AUTO_RETURN_LAYOUT);
-		}
+	if (apply_return && !restore_host_layout()) {
+		log(L"標準の画面へ戻す際に本体がエラーを出した");
 	}
 	g_settings.session_active = false;
 	g_settings.save();
@@ -647,6 +680,14 @@ static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 			if (g_active) { position_container(); relayout(); }
 			return r;
 		}
+		case WM_COMMAND:
+			// メディアエクスプローラーは切り離せない (本体の仕様) ため、自由分割中は開かせない
+			if (g_active && HIWORD(wp) == 0 && g_explorer_cmds.count(LOWORD(wp))) {
+				notify(L"メディアエクスプローラーは、自由分割中は使えません。\n"
+					L"「編集」→「プラグイン」→「TP_GUIdocker」→「自由分割を終了」で標準の画面に戻すと使えます。", MB_ICONINFORMATION);
+				return 0;
+			}
+			break;
 		case WM_CLOSE: {
 			// 終了前に標準の画面へ戻し、本体がその状態を保存するようにする
 			// (プラグインを外しても標準の画面で起動できる状態を保つ)
@@ -676,7 +717,7 @@ static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 }
 
 //---------------------------------------------------------------------
-//	戻り先レイアウトの選択
+//	メニュー項目の処理
 //---------------------------------------------------------------------
 
 static void choose_return_layout() {
@@ -685,7 +726,7 @@ static void choose_return_layout() {
 	HMENU menu = CreatePopupMenu();
 	auto names = list_layouts();
 	names.erase(std::remove_if(names.begin(), names.end(), [](const std::wstring& n) {
-		return n == DOCK_LAYOUT || n == AUTO_RETURN_LAYOUT;
+		return n.rfind(TPGD_NAME, 0) == 0;
 	}), names.end());
 	AppendMenuW(menu, MF_STRING | (g_settings.return_layout.empty() ? MF_CHECKED : 0), 1, L"自動 (自由分割に入る直前の配置)");
 	AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -706,6 +747,26 @@ static void choose_return_layout() {
 	}
 	g_settings.save();
 	log(L"戻り先レイアウト: " + g_settings.effective_return_layout());
+}
+
+static void reset_tree() {
+	g_root = default_tree();
+	if (g_active) {
+		// 初期配置に含まれないパネルは、浮いた窓へ戻す
+		for (auto it = g_panels.begin(); it != g_panels.end();) {
+			if (find_leaf_with(g_root.get(), it->key)) { ++it; continue; }
+			release_panel(*it);
+			g_floats.push_back({ it->hwnd, it->key });
+			move_float_to_center(it->hwnd);
+			it = g_panels.erase(it);
+		}
+		for (auto& p : g_panels) {
+			if (Node* l = find_leaf_with(g_root.get(), p.key)) if (l->active.empty()) l->active = p.key;
+		}
+		relayout();
+	}
+	save_tree();
+	log(L"配置を初期状態に戻した");
 }
 
 //---------------------------------------------------------------------
@@ -756,7 +817,7 @@ static void paint(HWND hwnd) {
 		for (auto& t : g_tab_hits) {
 			bool sel = (t.leaf->active == t.key);
 			if (sel) fill(t.rect, c_tab_sel);
-			RECT line = { t.rect.right - 1, t.rect.top + 4, t.rect.right, t.rect.bottom - 4 };
+			RECT line = { t.rect.right - 1, t.rect.top + scaled(4), t.rect.right, t.rect.bottom - scaled(4) };
 			fill(line, c_tab_line);
 			std::wstring title;
 			for (auto& p : g_panels) if (p.key == t.key) { title = p.title; break; }
@@ -778,40 +839,25 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 			enter_dock(true);
 			return 0;
 		case WM_APP_EXIT:
+			if (g_busy) return 0;
 			g_settings.resume = false;
-			exit_dock(true);
 			g_settings.save();
+			exit_dock(true);
 			return 0;
 		case WM_APP_RESET_TREE:
-			g_root = default_tree();
-			if (g_active) {
-				// 取り込み済みパネルを初期配置の葉へ入れ直す
-				for (auto& p : g_panels) {
-					if (!find_leaf_with(g_root.get(), p.key)) {
-						if (Node* l = default_leaf(g_root.get())) l->panels.push_back(p.key);
-					}
-				}
-				relayout();
-			}
-			save_tree();
-			log(L"配置を初期状態に戻した");
+			if (!g_busy) reset_tree();
 			return 0;
 		case WM_APP_CHOOSE_RETURN:
 			choose_return_layout();
 			return 0;
 		case WM_APP_RELAYOUT:
-			if (g_active) relayout();
-			return 0;
-		case WM_APP_DIAG:
-			if (g_active) {
-				MessageBoxW(g_main, L"診断は自由分割を終了してから実行してください。", TPGD_NAME, MB_OK | MB_ICONINFORMATION);
-			} else {
-				diag_run(hwnd);
-			}
+			if (g_active && !g_busy) relayout();
 			return 0;
 
 		case WM_TIMER:
-			if (wp == TIMER_STARTUP) {
+			if (wp == TIMER_HOST_OPS) {
+				host_ops_on_timer();
+			} else if (wp == TIMER_STARTUP) {
 				HWND main = find_main_window();
 				if (!main && ++g_startup_tries < 25) return 0; // 本体の準備待ち
 				KillTimer(hwnd, TIMER_STARTUP);
@@ -825,8 +871,6 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				}
 			} else if (wp == TIMER_WATCH) {
 				watch();
-			} else if (wp == TIMER_DIAG_DIALOG) {
-				diag_on_timer(hwnd);
 			} else if (wp == TIMER_REENTER) {
 				KillTimer(hwnd, TIMER_REENTER);
 				if (!g_main_destroying && g_main && IsWindow(g_main)) {
@@ -879,7 +923,7 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				const RECT& r = g_drag->rect;
 				int total = (g_drag->vertical ? (r.bottom - r.top) : (r.right - r.left)) - gap_size();
 				int pos = g_drag->vertical ? (pt.y - r.top) : (pt.x - r.left);
-				int lo = min_pane(), hi = total - min_pane();
+				int lo = scaled(MIN_PANE), hi = total - scaled(MIN_PANE);
 				if (total > 0 && hi > lo) {
 					pos = std::clamp(pos, lo, hi);
 					g_drag->ratio = (double)pos / total;
@@ -889,9 +933,7 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 			}
 			return 0;
 		case WM_LBUTTONUP:
-			if (g_drag) {
-				ReleaseCapture();
-			}
+			if (g_drag) ReleaseCapture();
 			return 0;
 		case WM_CAPTURECHANGED:
 			if (g_drag) {
@@ -936,12 +978,24 @@ bool dock_init() {
 	return true;
 }
 
+void dock_cleanup_legacy() {
+	// 開発中の診断で作った試験用レイアウトを削除する
+	WIN32_FIND_DATAW fd;
+	std::wstring dir = layout_dir();
+	HANDLE h = FindFirstFileW((dir + L"\\" TPGD_NAME L"_試験*.layout").c_str(), &fd);
+	if (h == INVALID_HANDLE_VALUE) return;
+	do {
+		std::wstring path = dir + L"\\" + fd.cFileName;
+		if (DeleteFileW(path.c_str())) log(L"不要になった試験用レイアウトを削除: " + std::wstring(fd.cFileName));
+	} while (FindNextFileW(h, &fd));
+	FindClose(h);
+}
+
 void dock_request_startup() { if (g_container) PostMessageW(g_container, WM_APP_STARTUP, 0, 0); }
 void dock_request_enter() { if (g_container) PostMessageW(g_container, WM_APP_ENTER, 0, 0); }
 void dock_request_exit() { if (g_container) PostMessageW(g_container, WM_APP_EXIT, 0, 0); }
 void dock_request_reset_tree() { if (g_container) PostMessageW(g_container, WM_APP_RESET_TREE, 0, 0); }
 void dock_request_choose_return_layout() { if (g_container) PostMessageW(g_container, WM_APP_CHOOSE_RETURN, 0, 0); }
-void dock_request_diag() { if (g_container) PostMessageW(g_container, WM_APP_DIAG, 0, 0); }
 
 void dock_shutdown() {
 	if (g_active) exit_dock(g_main && IsWindow(g_main) && !g_main_destroying);
