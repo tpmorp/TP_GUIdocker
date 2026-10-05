@@ -1,18 +1,20 @@
 //----------------------------------------------------------------------------------
-//	診断: 本体のレイアウト読み込み仕様を実験で確かめる (第3回)
+//	診断: 本体のレイアウト読み込み仕様を実験で確かめる (第4回)
 //
 //	第1回: 全パネル (非表示を含む) を切り離しにすると読み込み失敗が多発し、本体標準パネルは切り離されない
 //	第2回: 表示中パネルだけの切り離し、位置・大きさの指定、非表示パネル1枚の切り離しは、いずれも成功
-//	→ 非表示パネルのうち、まとめて切り離すと失敗するものを組分けで特定する
+//	第3回: 非表示のメディアエクスプローラーを切り離しにすると失敗し、全体の適用が崩れる。
+//	       それ以外の非表示パネル (本体標準・他者製) は切り離しにできる
+//	→ 第4回: 表示中のエクスプローラーなら切り離せるかを確かめ、本番の形の成功を確認する
 //
 //	土台 = basic の表示中パネルだけを切り離し (第2回で成功を確認済み)
-//	試験1: 土台 + 非表示の本体標準パネル (エクスプローラー以外)
-//	試験2: 土台 + 非表示のエクスプローラー 1〜4
-//	試験3: 土台 + 非表示のエクスプローラー 5 以降 (style.conf の既定数は 4)
-//	試験4: 土台 + 非表示の他者製パネル
-//	試験5: 土台 + 非表示パネル全部
-//	試験6: 試験5 と同じ内容をもう一度 (第1回で回数ごとに失敗数が減ったため)
-//	各試験の後に basic を適用して状態を揃える
+//	試験1: basic + エクスプローラー1 を表示 (結合のまま)              … 対照
+//	試験2: 土台 + エクスプローラー1 を表示して切り離し (basic の状態から)
+//	試験3: 試験1 と同じ (basic に戻さず次へ)
+//	試験4: 試験2 と同じ (エクスプローラー1 が結合で表示中の状態から)
+//	試験5: 土台 + エクスプローラー5 を表示して切り離し (既定数4を超える番号)
+//	試験6: 本番の形 = 土台 + 非表示パネル (エクスプローラー以外) を切り離し
+//	各試験の後に basic を適用して状態を揃える (試験3 を除く)
 //----------------------------------------------------------------------------------
 #include "diag.h"
 #include "host.h"
@@ -30,6 +32,7 @@ struct DiagTest {
 	std::wstring description;
 	IniDoc doc;
 	std::map<std::wstring, POINT> expected;  // セクション名 → 与えた位置
+	bool restore = true;                     // 試験後に basic へ戻すか
 };
 
 std::vector<DiagTest> g_tests;
@@ -58,17 +61,6 @@ void set_floating(DiagTest& t, const char* section, int x, int y, int w, int h) 
 }
 
 } // namespace
-
-// 本体標準パネルのセクション名か
-static bool is_builtin(const std::string& section) {
-	static const char* BUILTIN[] = {
-		"Window.preview", "Window.edit", "Window.setting", "Window.setting.color", "Window.setting.text",
-		"Window.setting.time", "Window.scene.list", "Window.scene.preview", "Window.object.list",
-		"Window.mark.list", "Window.layer.setting", "Window.log", "Window.graph.histogram", "Window.system.info",
-	};
-	for (auto b : BUILTIN) if (section == b) return true;
-	return section.rfind("Window.explorer:", 0) == 0;
-}
 
 void diag_prepare() {
 	g_tests.clear();
@@ -113,28 +105,59 @@ void diag_prepare() {
 	};
 
 	auto is_explorer = [](const IniSection& s) { return s.name.rfind("Window.explorer:", 0) == 0; };
-	auto explorer_no = [](const IniSection& s) { return atoi(s.name.c_str() + 16); };
 
-	DiagTest t1 = make(1, L"土台 + 非表示の本体標準パネル (エクスプローラー以外)",
-		[&](const IniSection& s) { return is_builtin(s.name) && !is_explorer(s); });
-	DiagTest t2 = make(2, L"土台 + 非表示のエクスプローラー 1〜4",
-		[&](const IniSection& s) { return is_explorer(s) && explorer_no(s) <= 4; });
-	DiagTest t3 = make(3, L"土台 + 非表示のエクスプローラー 5 以降",
-		[&](const IniSection& s) { return is_explorer(s) && explorer_no(s) >= 5; });
-	DiagTest t4 = make(4, L"土台 + 非表示の他者製パネル",
-		[&](const IniSection& s) { return !is_builtin(s.name); });
-	DiagTest t5 = make(5, L"土台 + 非表示パネル全部",
-		[&](const IniSection&) { return true; });
-	DiagTest t6 = t5;
-	t6.name = test_name(6);
-	t6.description = L"試験5 と同じ内容をもう一度 (2回目で結果が変わるか)";
+	// エクスプローラーを表示する (結合のまま)
+	auto show_docked = [](DiagTest& t, const char* section) {
+		if (auto s = t.doc.find(section)) {
+			s->set("hide", "0");
+			s->set("floating", "0");
+		} else {
+			t.description += L" ※セクション無し";
+		}
+	};
+	// エクスプローラーを表示して切り離す
+	auto show_floating = [&](DiagTest& t, const char* section) {
+		if (auto s = t.doc.find(section)) {
+			s->set("hide", "0");
+			int x, y;
+			next_pos(x, y);
+			set_floating(t, section, x, y, 480, 320);
+		} else {
+			t.description += L" ※セクション無し";
+		}
+	};
+
+	DiagTest t1{ test_name(1), L"basic + エクスプローラー1 を表示 (結合のまま)", basic, {} };
+	show_docked(t1, "Window.explorer:1");
+
+	DiagTest t2 = base;
+	t2.name = test_name(2);
+	t2.description = L"土台 + エクスプローラー1 を表示して切り離し (basic の状態から)";
+	show_floating(t2, "Window.explorer:1");
+
+	DiagTest t3 = t1;
+	t3.name = test_name(3);
+	t3.description = L"試験1 と同じ (エクスプローラー1 を結合で表示。basic に戻さず次へ)";
+	t3.restore = false;
+
+	DiagTest t4 = t2;
+	t4.name = test_name(4);
+	t4.description = L"試験2 と同じ (エクスプローラー1 が結合で表示されている状態から切り離し)";
+
+	DiagTest t5 = base;
+	t5.name = test_name(5);
+	t5.description = L"土台 + エクスプローラー5 を表示して切り離し";
+	show_floating(t5, "Window.explorer:5");
+
+	DiagTest t6 = make(6, L"本番の形: 土台 + 非表示パネル (エクスプローラー以外) を切り離し",
+		[&](const IniSection& s) { return !is_explorer(s); });
 
 	g_tests = { t1, t2, t3, t4, t5, t6 };
 	for (auto& t : g_tests) {
 		std::wstring path = layout_dir() + L"\\" + t.name + L".layout";
 		if (!t.doc.save(path)) log(L"[診断] 書き出し失敗: " + path);
 	}
-	log(L"[診断] 第3回の試験用レイアウトを " + std::to_wstring(g_tests.size()) + L" 件用意");
+	log(L"[診断] 第4回の試験用レイアウトを " + std::to_wstring(g_tests.size()) + L" 件用意");
 }
 
 //---------------------------------------------------------------------
@@ -256,6 +279,10 @@ static void run_test(HWND owner, HWND main, const DiagTest& t) {
 	log(L"[診断]   切り離し窓の総数: " + std::to_wstring(panels.size()) + L" (表示中 " + std::to_wstring(visible) + L")");
 
 	// basic に戻して状態を揃える
+	if (!t.restore) {
+		log(L"[診断]   (basic に戻さず次の試験へ)");
+		return;
+	}
 	int restore_errors = apply_layout_counting_errors(owner, main, L"basic", elapsed);
 	log(L"[診断]   basic に戻す: エラー表示 " + std::to_wstring(restore_errors) + L" 回");
 }
@@ -266,7 +293,7 @@ void diag_run(HWND owner) {
 		log(L"[診断] 実行できない (メイン窓または試験が無い)");
 		return;
 	}
-	log(L"[診断] ===== 第3回 開始 (表示倍率 " + std::to_wstring(GetDpiForWindow(main)) + L"dpi) =====");
+	log(L"[診断] ===== 第4回 開始 (表示倍率 " + std::to_wstring(GetDpiForWindow(main)) + L"dpi) =====");
 	DWORD elapsed = 0;
 	int e = apply_layout_counting_errors(owner, main, L"basic", elapsed);
 	log(L"[診断] 開始前に basic を適用: エラー表示 " + std::to_wstring(e) + L" 回");
