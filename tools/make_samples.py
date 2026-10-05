@@ -436,8 +436,15 @@ def main():
     # ページ番号
     for i, p in enumerate(pages, start=1):
         ImageDraw.Draw(p).text((PAGE_W - MARGIN - 120, PAGE_H - 40), f"{i} / {len(pages)}", fill=SUB, font=font(18))
-    pages[0].save(OUTPUT, save_all=True, append_images=pages[1:], resolution=150)
-    print(f"生成: {OUTPUT} ({len(pages)} ページ)")
+    out = OUTPUT
+    try:
+        pages[0].save(out, save_all=True, append_images=pages[1:], resolution=150)
+    except PermissionError:
+        # PDF がビューアで開かれていて上書きできない場合は、版を付けた別名で保存する
+        out = OUTPUT.with_name(f"{OUTPUT.stem}_{data.get('version', 'new')}{OUTPUT.suffix}")
+        pages[0].save(out, save_all=True, append_images=pages[1:], resolution=150)
+        print(f"注意: {OUTPUT.name} が開かれているため、別名で保存した")
+    print(f"生成: {out} ({len(pages)} ページ)")
 
 
 if __name__ == "__main__":
