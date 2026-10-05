@@ -12,51 +12,51 @@ namespace tpgd::ui {
 //---------------------------------------------------------------------
 
 // 「編集」→「プラグイン」→「TP_GUIdocker」の切り替え項目 (無効中) [実装済み]
-constexpr const wchar_t* MENU_ENABLE = L"TP_GUIdocker を有効化";
+constexpr const wchar_t* MENU_ENABLE = L"TP_GUIdockerを有効化";
 // 同上 (有効中) [実装済み]
-constexpr const wchar_t* MENU_DISABLE = L"TP_GUIdocker を無効化";
+constexpr const wchar_t* MENU_DISABLE = L"TP_GUIdockerを無効化";
 // 「TP_GUIdocker」メニューの項目 [実装済み]
 constexpr const wchar_t* MENU_RESET = L"配置を初期状態に戻す";
 // 「TP_GUIdocker」メニューの項目 [実装済み]
-constexpr const wchar_t* MENU_CHOOSE_RETURN = L"戻り先レイアウトを選ぶ";
+constexpr const wchar_t* MENU_CHOOSE_RETURN = L"無効時のレイアウトを選ぶ";
 // 「TP_GUIdocker」メニューの項目 (落とし先の見せ方を切り替える) [段階2で実装]
 constexpr const wchar_t* MENU_DROP_STYLE = L"落とし先の表示を切り替え";
 // 「戻り先レイアウトを選ぶ」の一覧の先頭 [実装済み]
 constexpr const wchar_t* RETURN_AUTO = L"自動 (有効化する直前の配置)";
 // 起動時、準備が整うまで本体の画面を覆う表示 [実装済み]
-constexpr const wchar_t* COVER = L"TP_GUIdocker を有効化しています…";
+constexpr const wchar_t* COVER = L"TP_GUIdockerを有効化しています…";
 // パネルが1枚も無い区画の中央 [実装済み]
-constexpr const wchar_t* EMPTY_AREA = L"(パネルなし)";
+constexpr const wchar_t* EMPTY_AREA = L"";
 // 初めて有効化する時の確認 (%lu は本体バージョン) [実装済み]
-constexpr const wchar_t* CONFIRM_FIRST = L"TP_GUIdocker を有効化します。\n\n本体の画面に手を加える機能のため、不具合が起きた場合は「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdocker を無効化」で元に戻せます。\n\n有効化しますか？ (本体バージョン %lu)";
+constexpr const wchar_t* CONFIRM_FIRST = L"TP_GUIdockerを有効化します。\n\n本体の画面に手を加える機能のため、不具合が起きた場合は「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdockerを無効化」で元に戻せます。\n\n有効化しますか？ (本体バージョン %lu)";
 // 本体の更新を検知した時の確認 (%lu は旧・新バージョン) [実装済み]
-constexpr const wchar_t* CONFIRM_HOST_UPDATED = L"AviUtl2 本体が更新されています (%lu → %lu)。\n\nTP_GUIdocker はこのバージョンで未確認です。不具合が起きる可能性があります。\n有効化しますか？";
+constexpr const wchar_t* CONFIRM_HOST_UPDATED = L"AviUtl2本体が更新されています (%lu → %lu)。\n\nTP_GUIdockerはこのバージョンで未確認です。不具合が起きる可能性があります。\n有効化しますか？";
 // 有効化に失敗した時の知らせ (先頭) [実装済み]
-constexpr const wchar_t* FAIL_TITLE = L"TP_GUIdocker を有効化できませんでした。\n\n理由: ";
+constexpr const wchar_t* FAIL_TITLE = L"TP_GUIdockerを有効化できませんでした。\n\n理由: ";
 // 同上 (標準の画面に戻せた場合の末尾) [実装済み]
-constexpr const wchar_t* FAIL_RESTORED = L"\n\n標準の画面に戻しました。";
+constexpr const wchar_t* FAIL_RESTORED = L"\n\n無効化しました。";
 // 同上 (戻せなかった場合の末尾) [実装済み]
 constexpr const wchar_t* FAIL_NOT_RESTORED = L"\n\n「表示」→「レイアウト」から普段の配置を選んで戻してください。";
 // 失敗の理由 [実装済み]
 constexpr const wchar_t* REASON_SAVE_CURRENT = L"現在の配置を本体に保存させることができませんでした。";
 // 失敗の理由 [実装済み]
-constexpr const wchar_t* REASON_REGISTER = L"TP_GUIdocker 用のレイアウトを本体に登録できませんでした。";
+constexpr const wchar_t* REASON_REGISTER = L"TP_GUIdocker用のレイアウトを本体に登録できませんでした。";
 // 失敗の理由 [実装済み]
 constexpr const wchar_t* REASON_READ_SAVED = L"保存した配置を読み込めませんでした。";
 // 失敗の理由 [実装済み]
-constexpr const wchar_t* REASON_WRITE = L"TP_GUIdocker 用のレイアウトを書き出せませんでした。";
+constexpr const wchar_t* REASON_WRITE = L"TP_GUIdocker用のレイアウトを書き出せませんでした。";
 // 失敗の理由 [実装済み]
 constexpr const wchar_t* REASON_LOAD_FAILED = L"本体がレイアウトの読み込みに失敗しました。";
 // 失敗の理由 [実装済み]
-constexpr const wchar_t* REASON_NOT_IN_MENU = L"TP_GUIdocker 用のレイアウトがメニューに見つかりません。";
+constexpr const wchar_t* REASON_NOT_IN_MENU = L"TP_GUIdocker用のレイアウトがメニューに見つかりません。";
 // 失敗の理由 (%s は切り離されなかったパネル) [実装済み]
 constexpr const wchar_t* REASON_MISSING = L"一部のパネルが本体に切り離されませんでした (%s)。";
 // 失敗の理由 (%s はパネル) [実装済み]
-constexpr const wchar_t* REASON_CAPTURE = L"パネル (%s) を取り込めませんでした。";
+constexpr const wchar_t* REASON_CAPTURE = L"パネル(%s)を取り込めませんでした。";
 // 有効中にメディアエクスプローラーを開こうとした時の案内 [実装済み]
-constexpr const wchar_t* EXPLORER_NOTICE = L"メディアエクスプローラーは、TP_GUIdocker の有効中は使えません。\n「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdocker を無効化」で標準の画面に戻すと使えます。";
+constexpr const wchar_t* EXPLORER_NOTICE = L"メディアエクスプローラーは、TP_GUIdockerの有効中は使えません。\n「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdockerを無効化」で標準の画面に戻すと使えます。";
 // タブの右クリックメニュー [段階2で実装]
-constexpr const wchar_t* TAB_FLOAT = L"浮かせる";
+constexpr const wchar_t* TAB_FLOAT = L"分離する";
 // タブの右クリックメニュー [段階2で実装]
 constexpr const wchar_t* TAB_CLOSE = L"閉じる";
 // タブの右クリックメニュー (下に区画の一覧が出る) [段階2で実装]
@@ -72,13 +72,13 @@ constexpr const wchar_t* SPLIT_TOP = L"上に空き区画を作る";
 // 「この区画を分割」の下の項目 [段階2で実装]
 constexpr const wchar_t* SPLIT_BOTTOM = L"下に空き区画を作る";
 // 「他の区画へ移動」の一覧での区画の呼び名 (%s は区画の表示中パネル名) [段階2で実装]
-constexpr const wchar_t* AREA_NAME_FORMAT = L"%s の区画";
+constexpr const wchar_t* AREA_NAME_FORMAT = L"%sの区画";
 // 同上 (空き区画の呼び名。%d は番号) [段階2で実装]
-constexpr const wchar_t* AREA_NAME_EMPTY = L"空き区画 %d";
+constexpr const wchar_t* AREA_NAME_EMPTY = L"空き区画%d";
 // 落とし先の表示の切り替え時の知らせ [段階2で実装]
-constexpr const wchar_t* DROP_STYLE_COMPASS = L"落とし先の表示: 十字ボタン式";
+constexpr const wchar_t* DROP_STYLE_COMPASS = L"落とし先の表示:十字ボタン式";
 // 同上 [段階2で実装]
-constexpr const wchar_t* DROP_STYLE_REGION = L"落とし先の表示: 区画の領域式";
+constexpr const wchar_t* DROP_STYLE_REGION = L"落とし先の表示:区画の領域式";
 // 空き区画の右クリックメニュー [段階2で実装]
 constexpr const wchar_t* AREA_CLOSE = L"この区画を閉じる";
 // 照合できなかった浮いた窓を区画へ入れようとした時の知らせ [段階2で実装]

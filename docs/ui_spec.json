@@ -4,13 +4,13 @@
     {
       "id": "MENU_ENABLE",
       "where": "「編集」→「プラグイン」→「TP_GUIdocker」の切り替え項目 (無効中)",
-      "value": "TP_GUIdocker を有効化",
+      "value": "TP_GUIdockerを有効化",
       "status": "実装済み"
     },
     {
       "id": "MENU_DISABLE",
       "where": "同上 (有効中)",
-      "value": "TP_GUIdocker を無効化",
+      "value": "TP_GUIdockerを無効化",
       "status": "実装済み"
     },
     {
@@ -22,7 +22,7 @@
     {
       "id": "MENU_CHOOSE_RETURN",
       "where": "「TP_GUIdocker」メニューの項目",
-      "value": "戻り先レイアウトを選ぶ",
+      "value": "無効時のレイアウトを選ぶ",
       "status": "実装済み"
     },
     {
@@ -40,37 +40,37 @@
     {
       "id": "COVER",
       "where": "起動時、準備が整うまで本体の画面を覆う表示",
-      "value": "TP_GUIdocker を有効化しています…",
+      "value": "TP_GUIdockerを有効化しています…",
       "status": "実装済み"
     },
     {
       "id": "EMPTY_AREA",
       "where": "パネルが1枚も無い区画の中央",
-      "value": "(パネルなし)",
+      "value": "",
       "status": "実装済み"
     },
     {
       "id": "CONFIRM_FIRST",
       "where": "初めて有効化する時の確認 (%lu は本体バージョン)",
-      "value": "TP_GUIdocker を有効化します。\n\n本体の画面に手を加える機能のため、不具合が起きた場合は「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdocker を無効化」で元に戻せます。\n\n有効化しますか？ (本体バージョン %lu)",
+      "value": "TP_GUIdockerを有効化します。\n\n本体の画面に手を加える機能のため、不具合が起きた場合は「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdockerを無効化」で元に戻せます。\n\n有効化しますか？ (本体バージョン %lu)",
       "status": "実装済み"
     },
     {
       "id": "CONFIRM_HOST_UPDATED",
       "where": "本体の更新を検知した時の確認 (%lu は旧・新バージョン)",
-      "value": "AviUtl2 本体が更新されています (%lu → %lu)。\n\nTP_GUIdocker はこのバージョンで未確認です。不具合が起きる可能性があります。\n有効化しますか？",
+      "value": "AviUtl2本体が更新されています (%lu → %lu)。\n\nTP_GUIdockerはこのバージョンで未確認です。不具合が起きる可能性があります。\n有効化しますか？",
       "status": "実装済み"
     },
     {
       "id": "FAIL_TITLE",
       "where": "有効化に失敗した時の知らせ (先頭)",
-      "value": "TP_GUIdocker を有効化できませんでした。\n\n理由: ",
+      "value": "TP_GUIdockerを有効化できませんでした。\n\n理由: ",
       "status": "実装済み"
     },
     {
       "id": "FAIL_RESTORED",
       "where": "同上 (標準の画面に戻せた場合の末尾)",
-      "value": "\n\n標準の画面に戻しました。",
+      "value": "\n\n無効化しました。",
       "status": "実装済み"
     },
     {
@@ -88,7 +88,7 @@
     {
       "id": "REASON_REGISTER",
       "where": "失敗の理由",
-      "value": "TP_GUIdocker 用のレイアウトを本体に登録できませんでした。",
+      "value": "TP_GUIdocker用のレイアウトを本体に登録できませんでした。",
       "status": "実装済み"
     },
     {
@@ -100,7 +100,7 @@
     {
       "id": "REASON_WRITE",
       "where": "失敗の理由",
-      "value": "TP_GUIdocker 用のレイアウトを書き出せませんでした。",
+      "value": "TP_GUIdocker用のレイアウトを書き出せませんでした。",
       "status": "実装済み"
     },
     {
@@ -112,7 +112,7 @@
     {
       "id": "REASON_NOT_IN_MENU",
       "where": "失敗の理由",
-      "value": "TP_GUIdocker 用のレイアウトがメニューに見つかりません。",
+      "value": "TP_GUIdocker用のレイアウトがメニューに見つかりません。",
       "status": "実装済み"
     },
     {
@@ -124,19 +124,19 @@
     {
       "id": "REASON_CAPTURE",
       "where": "失敗の理由 (%s はパネル)",
-      "value": "パネル (%s) を取り込めませんでした。",
+      "value": "パネル(%s)を取り込めませんでした。",
       "status": "実装済み"
     },
     {
       "id": "EXPLORER_NOTICE",
       "where": "有効中にメディアエクスプローラーを開こうとした時の案内",
-      "value": "メディアエクスプローラーは、TP_GUIdocker の有効中は使えません。\n「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdocker を無効化」で標準の画面に戻すと使えます。",
+      "value": "メディアエクスプローラーは、TP_GUIdockerの有効中は使えません。\n「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdockerを無効化」で標準の画面に戻すと使えます。",
       "status": "実装済み"
     },
     {
       "id": "TAB_FLOAT",
       "where": "タブの右クリックメニュー",
-      "value": "浮かせる",
+      "value": "分離する",
       "status": "段階2で実装"
     },
     {
@@ -184,25 +184,25 @@
     {
       "id": "AREA_NAME_FORMAT",
       "where": "「他の区画へ移動」の一覧での区画の呼び名 (%s は区画の表示中パネル名)",
-      "value": "%s の区画",
+      "value": "%sの区画",
       "status": "段階2で実装"
     },
     {
       "id": "AREA_NAME_EMPTY",
       "where": "同上 (空き区画の呼び名。%d は番号)",
-      "value": "空き区画 %d",
+      "value": "空き区画%d",
       "status": "段階2で実装"
     },
     {
       "id": "DROP_STYLE_COMPASS",
       "where": "落とし先の表示の切り替え時の知らせ",
-      "value": "落とし先の表示: 十字ボタン式",
+      "value": "落とし先の表示:十字ボタン式",
       "status": "段階2で実装"
     },
     {
       "id": "DROP_STYLE_REGION",
       "where": "同上",
-      "value": "落とし先の表示: 区画の領域式",
+      "value": "落とし先の表示:区画の領域式",
       "status": "段階2で実装"
     },
     {
@@ -419,6 +419,176 @@
       "unit": "",
       "status": "実装済み",
       "note": "利用者の指定"
+    }
+  ],
+  "history": [
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "MENU_ENABLE",
+      "instruction": "TP_GUIdockerを有効化",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "MENU_DISABLE",
+      "instruction": "TP_GUIdockerを無効化",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "MENU_CHOOSE_RETURN",
+      "instruction": "無効時のレイアウトを選ぶ",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "COVER",
+      "instruction": "TP_GUIdockerを有効化しています…",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "CONFIRM_FIRST",
+      "instruction": "TP_GUIdockerを有効化します。\n\n本体の画面に手を加える機能のため、不具合が起きた場合は「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdockerを無効化」で元に戻せます。\n\n有効化しますか？ (本体バージョン %lu)",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "CONFIRM_HOST_UPDATED",
+      "instruction": "AviUtl2本体が更新されています (%lu → %lu)。\n\nTP_GUIdockerはこのバージョンで未確認です。不具合が起きる可能性があります。\n有効化しますか？",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "FAIL_TITLE",
+      "instruction": "TP_GUIdockerを有効化できませんでした。\n\n理由: ",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "REASON_REGISTER",
+      "instruction": "TP_GUIdocker用のレイアウトを本体に登録できませんでした。",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "REASON_WRITE",
+      "instruction": "TP_GUIdocker用のレイアウトを書き出せませんでした。",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "REASON_NOT_IN_MENU",
+      "instruction": "TP_GUIdocker用のレイアウトがメニューに見つかりません。",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "REASON_CAPTURE",
+      "instruction": "パネル(%s)を取り込めませんでした。",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "EXPLORER_NOTICE",
+      "instruction": "メディアエクスプローラーは、TP_GUIdockerの有効中は使えません。\n「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdockerを無効化」で標準の画面に戻すと使えます。",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "TAB_FLOAT",
+      "instruction": "分離する",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "AREA_NAME_FORMAT",
+      "instruction": "%sの区画",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "AREA_NAME_EMPTY",
+      "instruction": "空き区画%d",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "DROP_STYLE_COMPASS",
+      "instruction": "落とし先の表示:十字ボタン式",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "DROP_STYLE_REGION",
+      "instruction": "落とし先の表示:区画の領域式",
+      "action": "指示どおりの文言に変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "MENU_RESET",
+      "instruction": "配置を初期状態に戻す",
+      "action": "現在の文言と同じため変更なし",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "EMPTY_AREA",
+      "instruction": "無地にしたい",
+      "action": "文字を表示しない (無地) ように変更",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "FAIL_RESTORED",
+      "instruction": "無効化しました。",
+      "action": "「無効化しました。」に変更。失敗の理由の後ろに付く文のため、理由との間の空行は残した",
+      "result": "反映済み"
+    },
+    {
+      "date": "2026-10-06",
+      "sheet": "文言",
+      "id": "MENU_DROP_STYLE",
+      "instruction": "「落とし先」がよく分からない　実態を実装後に確認して適切な単語を充てたい",
+      "action": "実装後に実物を確認いただいたうえで、呼び名を相談して決める",
+      "result": "相談中"
     }
   ]
 }

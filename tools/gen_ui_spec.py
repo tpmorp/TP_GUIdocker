@@ -176,6 +176,18 @@ def read_existing_instructions(path: Path) -> dict:
     return found
 
 
+def drop_applied(kept: dict, spec: dict) -> dict:
+    """反映の記録に「反映済み」として載った指示は、修正指示欄から外す"""
+    done = {(h["sheet"], h["id"], str(h["instruction"])) for h in spec.get("history", []) if h.get("result") == "反映済み"}
+    out = {}
+    for sheet, items in kept.items():
+        for item_id, text in items.items():
+            if (sheet, item_id, str(text)) in done:
+                continue
+            out.setdefault(sheet, {})[item_id] = text
+    return out
+
+
 def generate_workbook(spec: dict, kept: dict) -> Workbook:
     wb = Workbook()
 
@@ -205,7 +217,8 @@ def generate_workbook(spec: dict, kept: dict) -> Workbook:
         ("　文言の中の %s・%d・%lu は、実際の名前や数に置き換わる部分です。消さずに残してください。", font()),
         ("", None),
         ("■ 書き込んだ後", font(bold=True)),
-        ("　保存して、書き込んだことを知らせてください。内容を反映したプラグインを作り直します。", font()),
+        ("　保存して Excel を閉じ、書き込んだことを知らせてください。内容を反映したプラグインを作り直します。", font()),
+        ("　反映した指示は「修正指示」欄から消え、「反映の記録」シートに残ります。相談中の指示は欄に残ります。", font()),
         ("　(元データは docs/ui_spec.json。この表はそこから自動で作られます)", font(color="707070")),
     ]
     for i, (text, f) in enumerate(guide, start=1):
@@ -241,6 +254,25 @@ def generate_workbook(spec: dict, kept: dict) -> Workbook:
                 [[b["id"], b["item"], b["value"], b["choices"], b["unit"], kept_of("動作", b["id"]), b["status"], b["note"]] for b in spec["behavior"]],
                 input_col=6, status_col=7)
 
+    # 反映の記録 (新しいものが上)
+    ws = wb.create_sheet("反映の記録")
+    headers = ["日付", "シート", "ID", "いただいた指示", "対応", "結果"]
+    widths = [12, 10, 22, 50, 50, 12]
+    for c, (h, w) in enumerate(zip(headers, widths), start=1):
+        cell = ws.cell(row=1, column=c, value=h)
+        cell.font = font(bold=True, color="FFFFFF")
+        cell.fill = HEAD_FILL
+        cell.border = BORDER
+        ws.column_dimensions[get_column_letter(c)].width = w
+    for r, h in enumerate(reversed(spec.get("history", [])), start=2):
+        for c, v in enumerate([h["date"], h["sheet"], h["id"], h["instruction"], h["action"], h["result"]], start=1):
+            cell = ws.cell(row=r, column=c, value=v)
+            cell.font = font()
+            cell.alignment = WRAP
+            cell.border = BORDER
+        ws.cell(row=r, column=6).fill = DONE_FILL if h["result"] == "反映済み" else PLAN_FILL
+    ws.freeze_panes = "A2"
+
     return wb
 
 
@@ -254,7 +286,7 @@ def main():
     HEADER.write_text(generate_header(spec), encoding="utf-8", newline="\r\n")
     print(f"生成: {HEADER}")
 
-    kept = read_existing_instructions(WORKBOOK)
+    kept = drop_applied(read_existing_instructions(WORKBOOK), spec)
     n = sum(len(v) for v in kept.values())
     if n:
         print(f"既存の指示書の「修正指示」{n} 件を引き継ぐ")
