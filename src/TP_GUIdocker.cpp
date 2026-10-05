@@ -130,17 +130,30 @@ static UINT find_layout_command(HWND main, const std::wstring& name) {
 //	テンプレート (basic.layout) の表示中パネルをすべて切り離し状態にして書き出す
 //---------------------------------------------------------------------
 
+static bool is_directory(const std::wstring& p) {
+	DWORD a = GetFileAttributesW(p.c_str());
+	return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+// 本体のデータフォルダ (Plugin と Default を持つフォルダ) を探す
+// 本プラグインは <データフォルダ>\Plugin 以下の任意の深さに置かれ得るため、上位へ順にたどる
 static std::wstring data_dir() {
-	// 本プラグインは <データフォルダ>\Plugin に置かれる前提
 	HMODULE self = nullptr;
 	GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
 		(LPCWSTR)&data_dir, &self);
 	wchar_t path[MAX_PATH] = {};
 	GetModuleFileNameW(self, path, MAX_PATH);
 	std::wstring p = path;
-	p.resize(p.find_last_of(L'\\'));        // ...\Plugin
-	p.resize(p.find_last_of(L'\\'));        // ...\aviutl2
-	return p;
+	while (true) {
+		auto pos = p.find_last_of(L'\\');
+		if (pos == std::wstring::npos) break;
+		p.resize(pos);
+		if (is_directory(p + L"\\Plugin") && is_directory(p + L"\\Default")) return p;
+	}
+	// 見つからない場合は既定の場所
+	wchar_t pd[MAX_PATH] = {};
+	GetEnvironmentVariableW(L"ProgramData", pd, MAX_PATH);
+	return std::wstring(pd) + L"\\aviutl2";
 }
 
 static bool generate_layout_file() {
