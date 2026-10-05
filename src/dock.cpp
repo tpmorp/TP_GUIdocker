@@ -481,7 +481,7 @@ static void collect_explorer_commands() {
 
 // 開始の途中で失敗した場合の後始末
 static void abort_enter(const std::wstring& reason, bool interactive) {
-	log(L"自由分割の開始を中止: " + reason);
+	log(L"有効化を中止: " + reason);
 	if (g_active) {
 		KillTimer(g_container, TIMER_WATCH);
 		release_all_panels();
@@ -493,7 +493,7 @@ static void abort_enter(const std::wstring& reason, bool interactive) {
 	g_settings.session_active = false;
 	g_settings.save();
 	if (interactive) {
-		notify(L"自由分割を開始できませんでした。\n\n理由: " + reason +
+		notify(L"TP_GUIdocker を有効化できませんでした。\n\n理由: " + reason +
 			(restored ? L"\n\n標準の画面に戻しました。" : L"\n\n「表示」→「レイアウト」から普段の配置を選んで戻してください。"));
 	}
 }
@@ -519,13 +519,13 @@ static bool enter_dock(bool interactive) {
 	if (g_settings.verified_version != g_host_version) {
 		wchar_t msg[512];
 		if (g_settings.verified_version == 0) {
-			swprintf_s(msg, L"TP_GUIdocker の自由分割を開始します。\n\n"
-				L"本体の画面に手を加える機能のため、不具合が起きた場合は「編集」→「プラグイン」→「TP_GUIdocker」→「自由分割を終了」で元に戻せます。\n\n"
-				L"開始しますか？ (本体バージョン %lu)", g_host_version);
+			swprintf_s(msg, L"TP_GUIdocker を有効化します。\n\n"
+				L"本体の画面に手を加える機能のため、不具合が起きた場合は「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdocker を無効化」で元に戻せます。\n\n"
+				L"有効化しますか？ (本体バージョン %lu)", g_host_version);
 		} else {
 			swprintf_s(msg, L"AviUtl2 本体が更新されています (%lu → %lu)。\n\n"
 				L"TP_GUIdocker はこのバージョンで未確認です。不具合が起きる可能性があります。\n"
-				L"自由分割を開始しますか？", g_settings.verified_version, g_host_version);
+				L"有効化しますか？", g_settings.verified_version, g_host_version);
 		}
 		if (MessageBoxW(g_main, msg, TPGD_NAME, MB_YESNO | MB_ICONQUESTION) != IDYES) {
 			g_settings.resume = false;
@@ -537,7 +537,7 @@ static bool enter_dock(bool interactive) {
 		g_settings.save();
 	}
 
-	log(L"===== 自由分割を開始 =====");
+	log(L"===== 有効化 =====");
 
 	// 前回が異常終了 (自由分割中の印が残っている) なら、まず本体の配置を正常に戻す
 	if (g_settings.session_active) {
@@ -556,7 +556,7 @@ static bool enter_dock(bool interactive) {
 	// 2. 自由分割用レイアウトの枠を本体に作らせる (メニューに無い場合のみ)
 	if (!find_menu_command(g_main, { L"表示", L"レイアウト", DOCK_LAYOUT })) {
 		if (!host_create_layout(g_main, g_container, DOCK_LAYOUT)) {
-			abort_enter(L"自由分割用のレイアウトを本体に登録できませんでした。", interactive);
+			abort_enter(L"TP_GUIdocker 用のレイアウトを本体に登録できませんでした。", interactive);
 			return false;
 		}
 	}
@@ -585,11 +585,11 @@ static bool enter_dock(bool interactive) {
 	POINT origin = { work.left + scaled(40), work.top + scaled(40) };
 	DockLayoutPlan plan = build_dock_layout(base, is_visible, origin, scaled(FLOAT_W), scaled(FLOAT_H));
 	if (!plan.doc.save(layout_path(DOCK_LAYOUT))) {
-		abort_enter(L"自由分割用のレイアウトを書き出せませんでした。", interactive);
+		abort_enter(L"TP_GUIdocker 用のレイアウトを書き出せませんでした。", interactive);
 		return false;
 	}
 	g_slots = plan.slots;
-	log(L"自由分割用レイアウトを生成 (切り離し " + std::to_wstring(plan.slots.size()) + L" 件, 表示 " +
+	log(L"TP_GUIdocker 用レイアウトを生成 (切り離し " + std::to_wstring(plan.slots.size()) + L" 件, 表示 " +
 		std::to_wstring(plan.visible_keys.size()) + L" 件)");
 
 	g_settings.session_active = true;
@@ -598,7 +598,7 @@ static bool enter_dock(bool interactive) {
 	// 5. 適用する (本体のエラー表示を監視)
 	ApplyResult applied = host_apply_layout(g_main, g_container, DOCK_LAYOUT);
 	if (!applied.ok()) {
-		abort_enter(applied.in_menu ? L"本体がレイアウトの読み込みに失敗しました。" : L"自由分割用のレイアウトがメニューに見つかりません。", interactive);
+		abort_enter(applied.in_menu ? L"本体がレイアウトの読み込みに失敗しました。" : L"TP_GUIdocker 用のレイアウトがメニューに見つかりません。", interactive);
 		return false;
 	}
 
@@ -648,14 +648,14 @@ static bool enter_dock(bool interactive) {
 	relayout();
 	save_tree();
 	SetTimer(g_container, TIMER_WATCH, 300, nullptr);
-	log(L"自由分割を開始した (取り込み " + std::to_wstring(g_panels.size()) + L" 枚, 浮いた窓 " + std::to_wstring(g_floats.size()) + L" 枚)");
+	log(L"有効化した (取り込み " + std::to_wstring(g_panels.size()) + L" 枚, 浮いた窓 " + std::to_wstring(g_floats.size()) + L" 枚)");
 	return true;
 }
 
 static void exit_dock(bool apply_return) {
 	if (!g_active) return;
 	BusyGuard busy;
-	log(L"===== 自由分割を終了 =====");
+	log(L"===== 無効化 =====");
 	KillTimer(g_container, TIMER_WATCH);
 	save_tree();
 
@@ -706,8 +706,8 @@ static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 		case WM_COMMAND:
 			// メディアエクスプローラーは切り離せない (本体の仕様) ため、自由分割中は開かせない
 			if (g_active && HIWORD(wp) == 0 && g_explorer_cmds.count(LOWORD(wp))) {
-				notify(L"メディアエクスプローラーは、自由分割中は使えません。\n"
-					L"「編集」→「プラグイン」→「TP_GUIdocker」→「自由分割を終了」で標準の画面に戻すと使えます。", MB_ICONINFORMATION);
+				notify(L"メディアエクスプローラーは、TP_GUIdocker の有効中は使えません。\n"
+					L"「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdocker を無効化」で標準の画面に戻すと使えます。", MB_ICONINFORMATION);
 				return 0;
 			}
 			break;
@@ -717,7 +717,7 @@ static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 			bool was_active = g_active;
 			g_settings.resume = was_active;
 			g_settings.save();
-			log(L"本体の終了要求 (自由分割中=" + std::to_wstring(was_active) + L")");
+			log(L"本体の終了要求 (有効中=" + std::to_wstring(was_active) + L")");
 			if (was_active) exit_dock(true);
 			LRESULT r = DefSubclassProc(hwnd, msg, wp, lp);
 			// 保存確認などで終了が取り消された場合は、少し待って自由分割へ戻る
@@ -751,7 +751,7 @@ static void choose_return_layout() {
 	names.erase(std::remove_if(names.begin(), names.end(), [](const std::wstring& n) {
 		return n.rfind(TPGD_NAME, 0) == 0;
 	}), names.end());
-	AppendMenuW(menu, MF_STRING | (g_settings.return_layout.empty() ? MF_CHECKED : 0), 1, L"自動 (自由分割に入る直前の配置)");
+	AppendMenuW(menu, MF_STRING | (g_settings.return_layout.empty() ? MF_CHECKED : 0), 1, L"自動 (有効化する直前の配置)");
 	AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 	for (size_t i = 0; i < names.size(); i++) {
 		AppendMenuW(menu, MF_STRING | (g_settings.return_layout == names[i] ? MF_CHECKED : 0), 100 + i, names[i].c_str());
@@ -832,7 +832,7 @@ static void paint(HWND hwnd) {
 		fill(rc, c_bg);
 		SetTextColor(dc, c_text_dis);
 		RECT r = rc;
-		DrawTextW(dc, TPGD_NAME L": 自由分割を準備しています…", -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		DrawTextW(dc, TPGD_NAME L" を有効化しています…", -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 	} else if (g_root) {
 		for_each_leaf(g_root.get(), [&](Node* leaf) {
 			fill(leaf->tabs, c_tabbar);
@@ -908,7 +908,7 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				}
 			} else if (wp == TIMER_STARTUP_ENTER) {
 				KillTimer(hwnd, TIMER_STARTUP_ENTER);
-				log(L"前回の状態を引き継いで自由分割を開始 (resume=" + std::to_wstring(g_settings.resume) +
+				log(L"前回の状態を引き継いで有効化 (resume=" + std::to_wstring(g_settings.resume) +
 					L" session_active=" + std::to_wstring(g_settings.session_active) + L")");
 				enter_dock(true);
 				hide_cover();
@@ -917,7 +917,7 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 			} else if (wp == TIMER_REENTER) {
 				KillTimer(hwnd, TIMER_REENTER);
 				if (!g_main_destroying && g_main && IsWindow(g_main)) {
-					log(L"本体の終了が取り消されたため、自由分割へ戻る");
+					log(L"本体の終了が取り消されたため、再び有効化する");
 					enter_dock(false);
 				}
 			}

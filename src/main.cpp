@@ -50,8 +50,8 @@ EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
 	install_menu_hooks();
 	if (!dock_init()) return;
 
-	host->register_edit_menu(TPGD_NAME L"\\自由分割を開始", on_enter);
-	host->register_edit_menu(TPGD_NAME L"\\自由分割を終了", on_exit);
+	host->register_edit_menu(TPGD_NAME L"\\" TPGD_NAME L" を有効化", on_enter);
+	host->register_edit_menu(TPGD_NAME L"\\" TPGD_NAME L" を無効化", on_exit);
 	host->register_edit_menu(TPGD_NAME L"\\配置を初期状態に戻す", on_reset);
 	host->register_edit_menu(TPGD_NAME L"\\戻り先レイアウトを選ぶ", on_choose_return);
 
