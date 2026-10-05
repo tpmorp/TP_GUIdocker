@@ -56,6 +56,7 @@ enum : UINT {
 	WM_APP_MAXIMIZE,          // カーソルの下のパネルを最大化・元に戻す
 	WM_APP_TOGGLE_LOCK,       // レイアウトのロックの切り替え
 	WM_APP_EXPORT_SAMPLES,    // 見本の書き出し
+	WM_APP_THEME_COLOR,       // テーマの色を選ぶ (wParam: 1 なら本体設定に戻す)
 };
 
 enum : UINT_PTR {
@@ -204,18 +205,29 @@ static int tab_height() { return bar_size(ui::TAB_HEIGHT); }
 static int ws_bar_height() { return bar_size(ui::WS_BAR_HEIGHT); }
 static int footer_height() { return style_size("FooterHeight", 24, g_scale); }
 
+// 帯の文字: メニューバーと同じ文字 (Windows がメニューに使う文字の種類と大きさ。今の表示倍率のもの)
 static void update_font() {
 	if (g_font) DeleteObject(g_font);
-	std::wstring face = L"Yu Gothic UI";
-	float size = 13.0f;
-	if (g_config) {
-		if (FONT_INFO* fi = g_config->get_font_info(g_config, "Control")) {
-			if (fi->name && *fi->name) face = fi->name;
-			if (fi->size > 0) size = fi->size;
-		}
+	g_font = nullptr;
+	NONCLIENTMETRICSW ncm = { sizeof(ncm) };
+	UINT dpi = (UINT)(96 * g_scale + 0.5);
+	if (SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0, dpi)) {
+		ncm.lfMenuFont.lfQuality = CLEARTYPE_QUALITY;
+		g_font = CreateFontIndirectW(&ncm.lfMenuFont);
 	}
-	g_font = CreateFontW(-(int)(size * g_scale + 0.5), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-		OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, face.c_str());
+	if (!g_font) {
+		// 取得できない場合は本体の設定 (style.conf の Control) を使う
+		std::wstring face = L"Yu Gothic UI";
+		float size = 13.0f;
+		if (g_config) {
+			if (FONT_INFO* fi = g_config->get_font_info(g_config, "Control")) {
+				if (fi->name && *fi->name) face = fi->name;
+				if (fi->size > 0) size = fi->size;
+			}
+		}
+		g_font = CreateFontW(-(int)(size * g_scale + 0.5), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+			OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, face.c_str());
+	}
 }
 
 //---------------------------------------------------------------------
@@ -265,9 +277,32 @@ static void notify(const std::wstring& msg, UINT icon = MB_ICONWARNING) {
 //---------------------------------------------------------------------
 
 // 選択中のワークスペースのボタンの色 (利用者が選んだ色、無ければ本体設定)
-static COLORREF ws_active_color() {
-	if (g_settings.ws_active_color >= 0) return (COLORREF)g_settings.ws_active_color;
+static COLORREF theme_color() {
+	if (g_settings.theme_color >= 0) return (COLORREF)g_settings.theme_color;
 	return style_color("ButtonBodySelect", RGB(0x70, 0x70, 0xc0));
+}
+
+// ドラッグ中の予告・選ばれている扇の色 (テーマの色を選んでいればそれを使う)
+static COLORREF highlight_color() {
+	return g_settings.theme_color >= 0 ? (COLORREF)g_settings.theme_color : ui::DROP_HIGHLIGHT;
+}
+
+// テーマの色を選ぶ (reset: 本体設定に戻す)
+static void choose_theme_color(bool reset) {
+	if (reset) {
+		g_settings.theme_color = -1;
+	} else {
+		static COLORREF custom[16] = {};
+		CHOOSECOLORW cc = { sizeof(cc) };
+		cc.hwndOwner = g_main ? g_main : find_main_window();
+		cc.rgbResult = theme_color();
+		cc.lpCustColors = custom;
+		cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+		if (!ChooseColorW(&cc)) return;
+		g_settings.theme_color = (int)cc.rgbResult;
+	}
+	g_settings.save();
+	if (g_container) InvalidateRect(g_container, nullptr, TRUE);
 }
 
 // 錠前の絵の説明 (カーソルを乗せると出る)
@@ -704,7 +739,7 @@ static void update_drop_target(POINT pt) {
 		MapWindowPoints(g_container, nullptr, (POINT*)&v.preview, 2);
 	}
 	g_target = t;
-	g_overlay.update(v, ui::DROP_HIGHLIGHT, ui::DROP_ALPHA,
+	g_overlay.update(v, highlight_color(), ui::DROP_ALPHA,
 		style_color("ButtonBody", RGB(0x60, 0x60, 0x60)), style_color("Border", RGB(0x90, 0x90, 0x90)));
 }
 
@@ -1365,7 +1400,7 @@ static void show_workspace_menu(int index, POINT screen) {
 	AppendMenuW(menu, MF_STRING, ID_RESET, ui::WS_MENU_RESET);
 	AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 	AppendMenuW(menu, MF_STRING, ID_COLOR, ui::WS_MENU_COLOR);
-	AppendMenuW(menu, MF_STRING | (g_settings.ws_active_color >= 0 ? 0 : MF_GRAYED), ID_COLOR_RESET, ui::WS_MENU_COLOR_RESET);
+	AppendMenuW(menu, MF_STRING | (g_settings.theme_color >= 0 ? 0 : MF_GRAYED), ID_COLOR_RESET, ui::WS_MENU_COLOR_RESET);
 	AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 	AppendMenuW(menu, MF_STRING, ID_DELETE, ui::WS_MENU_DELETE);
 	UINT cmd = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, screen.x, screen.y, 0, g_container, nullptr);
@@ -1375,26 +1410,8 @@ static void show_workspace_menu(int index, POINT screen) {
 		case ID_SAVE: save_workspace(index); break;
 		case ID_RESET: switch_workspace(index, true); break;
 		case ID_DELETE: delete_workspace(index); break;
-		case ID_COLOR: {
-			// Windows の色選択画面で選ぶ
-			static COLORREF custom[16] = {};
-			CHOOSECOLORW cc = { sizeof(cc) };
-			cc.hwndOwner = g_main;
-			cc.rgbResult = ws_active_color();
-			cc.lpCustColors = custom;
-			cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-			if (ChooseColorW(&cc)) {
-				g_settings.ws_active_color = (int)cc.rgbResult;
-				g_settings.save();
-				InvalidateRect(g_container, nullptr, TRUE);
-			}
-			break;
-		}
-		case ID_COLOR_RESET:
-			g_settings.ws_active_color = -1;
-			g_settings.save();
-			InvalidateRect(g_container, nullptr, TRUE);
-			break;
+		case ID_COLOR: choose_theme_color(false); break;
+		case ID_COLOR_RESET: choose_theme_color(true); break;
 	}
 }
 
@@ -1921,7 +1938,7 @@ static void paint(HWND hwnd) {
 	} else if (g_root) {
 		// ワークスペースの帯
 		fill(g_bar, c_tabbar);
-		COLORREF c_ws_sel = ws_active_color();
+		COLORREF c_ws_sel = theme_color();
 		for (auto& w : g_ws_hits) {
 			bool sel = (w.index == g_settings.active_ws);
 			if (sel) fill(w.rect, c_ws_sel);
@@ -1949,7 +1966,12 @@ static void paint(HWND hwnd) {
 		});
 		for (auto& t : g_tab_hits) {
 			bool sel = (t.leaf->active == t.key);
-			if (sel) fill(t.rect, c_tab_sel);
+			if (sel) {
+				fill(t.rect, c_tab_sel);
+				// 選択中のタブの下線 (テーマの色)
+				int line = scaled(ui::TAB_ACTIVE_LINE);
+				if (line > 0) fill({ t.rect.left, t.rect.bottom - line, t.rect.right, t.rect.bottom }, c_ws_sel);
+			}
 			RECT line = { t.rect.right - 1, t.rect.top + scaled(4), t.rect.right, t.rect.bottom - scaled(4) };
 			fill(line, c_tab_line);
 			std::wstring title;
@@ -2063,6 +2085,9 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 			return 0;
 		case WM_APP_MAXIMIZE:
 			if (!g_busy) maximize_under_cursor();
+			return 0;
+		case WM_APP_THEME_COLOR:
+			choose_theme_color(wp != 0);
 			return 0;
 		case WM_APP_EXPORT_SAMPLES:
 			if (!g_busy) export_samples();
@@ -2274,6 +2299,7 @@ void dock_request_switch_workspace(int index) { if (g_container) PostMessageW(g_
 void dock_request_maximize() { if (g_container) PostMessageW(g_container, WM_APP_MAXIMIZE, 0, 0); }
 void dock_request_toggle_lock() { if (g_container) PostMessageW(g_container, WM_APP_TOGGLE_LOCK, 0, 0); }
 void dock_request_export_samples() { if (g_container) PostMessageW(g_container, WM_APP_EXPORT_SAMPLES, 0, 0); }
+void dock_request_theme_color(bool reset) { if (g_container) PostMessageW(g_container, WM_APP_THEME_COLOR, reset ? 1 : 0, 0); }
 void dock_request_reset_tree() { if (g_container) PostMessageW(g_container, WM_APP_RESET_TREE, 0, 0); }
 void dock_request_choose_return_layout() { if (g_container) PostMessageW(g_container, WM_APP_CHOOSE_RETURN, 0, 0); }
 

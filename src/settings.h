@@ -39,7 +39,7 @@ struct Settings {
 	std::wstring return_layout;    // 無効時のレイアウト (空なら自動保存したもの)
 	int drop_style = -1;           // ドラッグ時の表示の方式 (0: 十字ボタン式 / 1: 区画の領域式 / -1: 既定値)
 	bool locked = false;           // レイアウトのロック
-	int ws_active_color = -1;      // 選択中のワークスペースのボタンの色 (COLORREF。-1 なら本体設定)
+	int theme_color = -1;          // テーマの色 (COLORREF。-1 なら本体設定)
 
 	// [Tree] 分割木の形式の版
 	int tree_version = 0;

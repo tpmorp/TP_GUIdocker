@@ -33,6 +33,9 @@ void dock_request_toggle_lock();
 
 // 見本の画像を書き出す (指示用)
 void dock_request_export_samples();
+
+// テーマの色を選ぶ (reset: 本体設定に戻す)
+void dock_request_theme_color(bool reset);
 void dock_request_reset_tree();
 void dock_request_choose_return_layout();
 

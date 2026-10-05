@@ -84,7 +84,9 @@ void Settings::load() {
 	return_layout = read_string(path, L"Settings", L"return_layout");
 	drop_style = (int)GetPrivateProfileIntW(L"Settings", L"drop_style", (UINT)-1, path.c_str());
 	locked = GetPrivateProfileIntW(L"Settings", L"locked", 0, path.c_str()) != 0;
-	ws_active_color = (int)GetPrivateProfileIntW(L"Settings", L"ws_active_color", (UINT)-1, path.c_str());
+	theme_color = (int)GetPrivateProfileIntW(L"Settings", L"theme_color", (UINT)-1, path.c_str());
+	// 旧版で選んだワークスペースの色は、テーマの色として引き継ぐ
+	if (theme_color < 0) theme_color = (int)GetPrivateProfileIntW(L"Settings", L"ws_active_color", (UINT)-1, path.c_str());
 	tree_version = GetPrivateProfileIntW(L"Tree", L"version", 0, path.c_str());
 
 	workspaces.clear();
@@ -140,7 +142,8 @@ void Settings::save() {
 	WritePrivateProfileStringW(L"Settings", L"return_layout", return_layout.c_str(), path.c_str());
 	WritePrivateProfileStringW(L"Settings", L"drop_style", std::to_wstring(drop_style).c_str(), path.c_str());
 	WritePrivateProfileStringW(L"Settings", L"locked", locked ? L"1" : L"0", path.c_str());
-	WritePrivateProfileStringW(L"Settings", L"ws_active_color", std::to_wstring(ws_active_color).c_str(), path.c_str());
+	WritePrivateProfileStringW(L"Settings", L"theme_color", std::to_wstring(theme_color).c_str(), path.c_str());
+	WritePrivateProfileStringW(L"Settings", L"ws_active_color", nullptr, path.c_str());
 	WritePrivateProfileStringW(L"Tree", L"version", std::to_wstring(tree_version).c_str(), path.c_str());
 	// 旧版の項目は使わないため消す
 	WritePrivateProfileStringW(L"Tree", L"layout", nullptr, path.c_str());

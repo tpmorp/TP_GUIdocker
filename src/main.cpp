@@ -46,6 +46,8 @@ static void on_drop_style(EDIT_SECTION*) { dock_request_toggle_drop_style(); }
 static void on_maximize(EDIT_SECTION*) { dock_request_maximize(); }
 static void on_lock(EDIT_SECTION*) { dock_request_toggle_lock(); }
 static void on_export_samples(EDIT_SECTION*) { dock_request_export_samples(); }
+static void on_theme(EDIT_SECTION*) { dock_request_theme_color(false); }
+static void on_theme_reset(EDIT_SECTION*) { dock_request_theme_color(true); }
 template <int N> static void on_workspace(EDIT_SECTION*) { dock_request_switch_workspace(N - 1); }
 
 // ワークスペース1〜9の切り替え項目 (本体のショートカットキー設定で割り当てられるよう、メニュー項目として登録する)
@@ -93,6 +95,10 @@ EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
 	host->register_edit_menu(drop_name.c_str(), on_drop_style);
 	static const std::wstring samples_name = std::wstring(TPGD_NAME L"\\") + ui::MENU_EXPORT_SAMPLES;
 	host->register_edit_menu(samples_name.c_str(), on_export_samples);
+	static const std::wstring theme_name = std::wstring(TPGD_NAME L"\\") + ui::WS_MENU_COLOR;
+	host->register_edit_menu(theme_name.c_str(), on_theme);
+	static const std::wstring theme_reset_name = std::wstring(TPGD_NAME L"\\") + ui::WS_MENU_COLOR_RESET;
+	host->register_edit_menu(theme_reset_name.c_str(), on_theme_reset);
 
 	// 本体の起動完了後に、前回の状態を引き継ぐ
 	dock_request_startup();

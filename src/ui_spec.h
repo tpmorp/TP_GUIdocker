@@ -131,15 +131,16 @@ constexpr const wchar_t* MENU_EXPORT_SAMPLES = L"見本を書き出す";
 constexpr const wchar_t* EXPORT_DONE = L"見本を書き出しました。\n\n書き出し先: %s";
 // 無効中に見本を書き出そうとした時の知らせ [実装済み]
 constexpr const wchar_t* EXPORT_NEED_ACTIVE = L"見本は TP_GUIdockerの有効中に書き出せます。";
-// ワークスペースのボタンの右クリックメニュー [実装済み]
-constexpr const wchar_t* WS_MENU_COLOR = L"選択中の色を変える…";
+// ワークスペースのボタンの右クリックメニュー・「TP_GUIdocker」メニュー [実装済み]
+constexpr const wchar_t* WS_MENU_COLOR = L"テーマの色を変える…";
 // 同上 [実装済み]
-constexpr const wchar_t* WS_MENU_COLOR_RESET = L"選択中の色を本体設定に戻す";
+constexpr const wchar_t* WS_MENU_COLOR_RESET = L"テーマの色を本体設定に戻す";
 
 //---------------------------------------------------------------------
 //	見た目 (数値で指定するもの。本体設定に連動する項目は host.cpp で読む)
 //---------------------------------------------------------------------
 
+// テーマの色 (プラグイン全体の強調色): 本体設定 (ButtonBodySelect)。メニューで自由に変更可 (本体設定に連動)
 // タブ帯の高さ: メニューバーと同じ高さ (-1) [実装済み]
 constexpr int TAB_HEIGHT = -1;
 // 区画の間 (境界線) の太さ (% (本体設定 WindowSeparatorSize に対する割合)) [実装済み]
@@ -152,7 +153,8 @@ constexpr int MIN_PANE = 60;
 constexpr int FLOAT_W = 640;
 // 浮いた窓の既定の高さ (px (96dpi換算)) [実装済み]
 constexpr int FLOAT_H = 420;
-// タブの文字: 本体設定 (Control, 既定 Yu Gothic UI 13) (本体設定に連動)
+// タブ・ワークスペースの帯の文字: メニューバーと同じ高さ (-1) [実装済み]
+constexpr int FONT = -1;
 // タブ帯の背景色: 本体設定 (Grouping) (本体設定に連動)
 // 選択中のタブの背景色: 本体設定 (GroupingSelect) (本体設定に連動)
 // 選択中のタブの文字色: 本体設定 (Text) (本体設定に連動)
@@ -172,9 +174,11 @@ constexpr int DRAG_GHOST_ALPHA = 60;
 constexpr int WS_BAR_HEIGHT = -1;
 // ワークスペースのボタンの文字の左右の余白 (px (96dpi換算)) [実装済み]
 constexpr int WS_BUTTON_PADDING = 12;
-// 選択中のワークスペースのボタンの色: 本体設定 (ButtonBodySelect)。右クリックで自由に変更可 (本体設定に連動)
+// 選択中のワークスペースのボタンの色: テーマの色 (本体設定に連動)
 // ドーナツ型の中心の円の大きさ (% (直径に対する割合)) [実装済み]
 constexpr int COMPASS_HOLE = 40;
+// 選択中のタブの下線の太さ (色はテーマの色) (px (96dpi換算)) [実装済み]
+constexpr int TAB_ACTIVE_LINE = 2;
 
 //---------------------------------------------------------------------
 //	動作
