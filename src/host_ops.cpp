@@ -166,6 +166,20 @@ FILETIME file_time(const std::wstring& path) {
 
 } // namespace
 
+int host_ops_answer_message_box(const std::wstring& text) {
+	if (g_mode == Mode::None) return 0;
+	if (g_mode == Mode::Create && g_create_submitted && text.find(L"同名のレイアウト") != std::wstring::npos) {
+		log(L"上書きの確認に、画面を出さずに「OK」で答える");
+		return IDOK;
+	}
+	if (text.find(L"レイアウト") != std::wstring::npos && text.find(L"失敗") != std::wstring::npos) {
+		g_errors++;
+		log(L"本体のエラー表示を、画面を出さずに受け取る: " + text);
+		return IDOK;
+	}
+	return 0;
+}
+
 void host_ops_on_timer() {
 	if (g_mode == Mode::None) return;
 	for (HWND dlg : visible_dialogs()) {

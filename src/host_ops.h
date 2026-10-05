@@ -28,4 +28,8 @@ ApplyResult host_apply_layout(HWND main, HWND timer_owner, const std::wstring& n
 // タイマー処理 (入れ物の窓の WM_TIMER から呼ぶ)
 void host_ops_on_timer();
 
+// 本体が MessageBoxW で画面を出そうとした時に呼ぶ
+// 自動操作中の上書き確認・レイアウト読み込みエラーなら、画面を出さずに返す答えを返す (それ以外は 0)
+int host_ops_answer_message_box(const std::wstring& text);
+
 } // namespace tpgd

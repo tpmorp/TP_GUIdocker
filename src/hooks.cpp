@@ -1,21 +1,33 @@
 //----------------------------------------------------------------------------------
-//	本体の右クリックメニューの横取り
-//	本体 exe の取り込みアドレス表 (IAT) の TrackPopupMenu / TrackPopupMenuEx を差し替える
+//	本体の関数呼び出しの横取り
+//	本体 exe の取り込みアドレス表 (IAT) の項目を差し替える
 //
-//	取り込み中のパネルでは「ウィンドウ配置」→「ウィンドウを統合」を阻止する
-//	(本体がパネルを自身の画面へ戻してしまい、自由分割から外れるため)
-//	※ 項目番号は毎回変わるため、項目の文字列で判定する
+//	1. TrackPopupMenu / TrackPopupMenuEx (右クリックメニュー)
+//	   取り込み中のパネルでは「ウィンドウ配置」→「ウィンドウを統合」を阻止する
+//	   (本体がパネルを自身の画面へ戻してしまい、自由分割から外れるため)
+//	   ※ 項目番号は毎回変わるため、項目の文字列で判定する
+//	2. MessageBoxW (確認・エラーの画面)
+//	   プラグインが本体のレイアウト操作を自動で行っている間だけ、
+//	   「同名のレイアウト」の上書き確認とレイアウト読み込みエラーを、画面を出さずに答える
+//	   (画面を出すと警告音が鳴るため)。それ以外の画面は一切変えない
 //----------------------------------------------------------------------------------
 #include "hooks.h"
 #include "common.h"
 #include "dock.h"
+#include "host_ops.h"
 
 namespace tpgd {
 
 using TrackPopupMenuEx_t = BOOL(WINAPI*)(HMENU, UINT, int, int, HWND, LPTPMPARAMS);
 using TrackPopupMenu_t = BOOL(WINAPI*)(HMENU, UINT, int, int, int, HWND, const RECT*);
+using MessageBoxW_t = int(WINAPI*)(HWND, LPCWSTR, LPCWSTR, UINT);
 static TrackPopupMenuEx_t orig_TrackPopupMenuEx = nullptr;
 static TrackPopupMenu_t orig_TrackPopupMenu = nullptr;
+static MessageBoxW_t orig_MessageBoxW = nullptr;
+
+//---------------------------------------------------------------------
+//	右クリックメニュー
+//---------------------------------------------------------------------
 
 static bool find_menu_text(HMENU menu, UINT id, std::wstring& out) {
 	int n = GetMenuItemCount(menu);
@@ -67,44 +79,72 @@ static BOOL WINAPI hook_TrackPopupMenu(HMENU menu, UINT flags, int x, int y, int
 		[&](UINT f) { return orig_TrackPopupMenu(menu, f, x, y, reserved, hwnd, rect); });
 }
 
-// module の IAT 内で dll!func を指す項目を new_func に差し替え、差し替え前の値を返す
-static void* patch_iat(HMODULE module, const char* dll, const char* func, void* new_func, void* match = nullptr) {
+//---------------------------------------------------------------------
+//	確認・エラーの画面
+//---------------------------------------------------------------------
+
+static int WINAPI hook_MessageBoxW(HWND hwnd, LPCWSTR text, LPCWSTR caption, UINT type) {
+	if (int answer = host_ops_answer_message_box(text ? text : L"")) return answer;
+	return orig_MessageBoxW(hwnd, text, caption, type);
+}
+
+//---------------------------------------------------------------------
+//	IAT の差し替え
+//	取り込み名で項目を探す (他のプラグインが先に差し替えていても、その上に重ねられる)
+//---------------------------------------------------------------------
+
+static void* patch_iat(HMODULE module, const char* dll, const char* func, void* new_func) {
 	auto base = (BYTE*)module;
 	auto dos = (IMAGE_DOS_HEADER*)base;
 	auto nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
 	auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
 	if (!dir.VirtualAddress) return nullptr;
-	void* target = match ? match : (void*)GetProcAddress(GetModuleHandleA(dll), func);
-	if (!target) return nullptr;
 	for (auto imp = (IMAGE_IMPORT_DESCRIPTOR*)(base + dir.VirtualAddress); imp->Name; imp++) {
 		if (_stricmp((char*)(base + imp->Name), dll) != 0) continue;
-		for (auto thunk = (IMAGE_THUNK_DATA*)(base + imp->FirstThunk); thunk->u1.Function; thunk++) {
-			if ((void*)thunk->u1.Function != target) continue;
+		if (!imp->OriginalFirstThunk) continue;
+		auto names = (IMAGE_THUNK_DATA*)(base + imp->OriginalFirstThunk);
+		auto slots = (IMAGE_THUNK_DATA*)(base + imp->FirstThunk);
+		for (; names->u1.AddressOfData; names++, slots++) {
+			if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal)) continue;
+			auto by_name = (IMAGE_IMPORT_BY_NAME*)(base + names->u1.AddressOfData);
+			if (strcmp((char*)by_name->Name, func) != 0) continue;
 			DWORD old;
-			VirtualProtect(&thunk->u1.Function, sizeof(void*), PAGE_READWRITE, &old);
-			void* prev = (void*)thunk->u1.Function;
-			thunk->u1.Function = (ULONG_PTR)new_func;
-			VirtualProtect(&thunk->u1.Function, sizeof(void*), old, &old);
+			VirtualProtect(&slots->u1.Function, sizeof(void*), PAGE_READWRITE, &old);
+			void* prev = (void*)slots->u1.Function;
+			slots->u1.Function = (ULONG_PTR)new_func;
+			VirtualProtect(&slots->u1.Function, sizeof(void*), old, &old);
 			return prev;
 		}
 	}
 	return nullptr;
 }
 
+// 差し替えた項目を元に戻す (自分の差し替えがそのまま残っている場合のみ)
+static void unpatch_iat(HMODULE module, const char* dll, const char* func, void* ours, void* original) {
+	if (!original) return;
+	void* current = patch_iat(module, dll, func, original);
+	if (current && current != ours) {
+		// 他のプラグインが後から重ねている。外すと連鎖が切れるため元に戻す
+		patch_iat(module, dll, func, current);
+		log(std::wstring(L"他のプラグインが後から差し替えているため、横取りを残す: ") + utf8_to_wide(func));
+	}
+}
+
 void install_menu_hooks() {
 	HMODULE exe = GetModuleHandleW(nullptr);
 	orig_TrackPopupMenuEx = (TrackPopupMenuEx_t)patch_iat(exe, "user32.dll", "TrackPopupMenuEx", (void*)hook_TrackPopupMenuEx);
 	orig_TrackPopupMenu = (TrackPopupMenu_t)patch_iat(exe, "user32.dll", "TrackPopupMenu", (void*)hook_TrackPopupMenu);
-	log(std::wstring(L"メニュー横取り TrackPopupMenuEx=") + (orig_TrackPopupMenuEx ? L"設置" : L"対象なし") +
-		L" TrackPopupMenu=" + (orig_TrackPopupMenu ? L"設置" : L"対象なし"));
+	orig_MessageBoxW = (MessageBoxW_t)patch_iat(exe, "user32.dll", "MessageBoxW", (void*)hook_MessageBoxW);
+	log(std::wstring(L"横取り TrackPopupMenuEx=") + (orig_TrackPopupMenuEx ? L"設置" : L"対象なし") +
+		L" TrackPopupMenu=" + (orig_TrackPopupMenu ? L"設置" : L"対象なし") +
+		L" MessageBoxW=" + (orig_MessageBoxW ? L"設置" : L"対象なし"));
 }
 
 void uninstall_menu_hooks() {
 	HMODULE exe = GetModuleHandleW(nullptr);
-	if (orig_TrackPopupMenuEx) patch_iat(exe, "user32.dll", "TrackPopupMenuEx", (void*)orig_TrackPopupMenuEx, (void*)hook_TrackPopupMenuEx);
-	if (orig_TrackPopupMenu) patch_iat(exe, "user32.dll", "TrackPopupMenu", (void*)orig_TrackPopupMenu, (void*)hook_TrackPopupMenu);
-	orig_TrackPopupMenuEx = nullptr;
-	orig_TrackPopupMenu = nullptr;
+	unpatch_iat(exe, "user32.dll", "TrackPopupMenuEx", (void*)hook_TrackPopupMenuEx, (void*)orig_TrackPopupMenuEx);
+	unpatch_iat(exe, "user32.dll", "TrackPopupMenu", (void*)hook_TrackPopupMenu, (void*)orig_TrackPopupMenu);
+	unpatch_iat(exe, "user32.dll", "MessageBoxW", (void*)hook_MessageBoxW, (void*)orig_MessageBoxW);
 }
 
 } // namespace tpgd

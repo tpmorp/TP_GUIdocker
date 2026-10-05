@@ -42,6 +42,7 @@ enum : UINT_PTR {
 	TIMER_STARTUP = 1,
 	TIMER_WATCH = 2,
 	TIMER_REENTER = 3,
+	TIMER_STARTUP_ENTER = 4,
 };
 
 constexpr UINT_PTR PANEL_SUBCLASS_ID = 0x7447;
@@ -88,6 +89,7 @@ static bool g_active = false;
 static bool g_busy = false;            // 開始・終了の処理中 (重複実行を防ぐ)
 static bool g_moving = false;          // 自分で位置を変えている最中
 static int g_startup_tries = 0;
+static bool g_cover = false;           // 起動時の「準備中」の覆いを表示中
 
 static std::vector<Panel> g_panels;
 static std::vector<FloatPanel> g_floats;
@@ -364,6 +366,23 @@ static void detach_container() {
 	ShowWindow(g_container, SW_HIDE);
 	SetParent(g_container, nullptr);
 	SetWindowLongPtrW(g_container, GWL_STYLE, WS_POPUP | WS_CLIPCHILDREN);
+}
+
+// 起動時、自由分割の準備が整うまで本体の通常の画面を覆い隠す
+static void show_cover() {
+	if (g_active || g_cover) return;
+	g_cover = true;
+	attach_container();
+	InvalidateRect(g_container, nullptr, TRUE);
+	UpdateWindow(g_container);
+}
+
+static void hide_cover() {
+	if (!g_cover) return;
+	g_cover = false;
+	// 自由分割に入れていれば入れ物はそのまま使う。入れなかった場合は外す
+	if (!g_active) detach_container();
+	else InvalidateRect(g_container, nullptr, TRUE);
 }
 
 //---------------------------------------------------------------------
@@ -674,7 +693,7 @@ static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 	switch (msg) {
 		case WM_SIZE: {
 			LRESULT r = DefSubclassProc(hwnd, msg, wp, lp);
-			if (g_active) position_container();
+			if (g_active || g_cover) position_container();
 			return r;
 		}
 		case WM_DPICHANGED: {
@@ -808,7 +827,13 @@ static void paint(HWND hwnd) {
 	HGDIOBJ old = SelectObject(dc, g_font);
 	SetBkMode(dc, TRANSPARENT);
 
-	if (g_root) {
+	if (!g_active) {
+		// 起動時の「準備中」の覆い
+		fill(rc, c_bg);
+		SetTextColor(dc, c_text_dis);
+		RECT r = rc;
+		DrawTextW(dc, TPGD_NAME L": 自由分割を準備しています…", -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+	} else if (g_root) {
 		for_each_leaf(g_root.get(), [&](Node* leaf) {
 			fill(leaf->tabs, c_tabbar);
 			if (leaf->active.empty()) {
@@ -837,7 +862,7 @@ static void paint(HWND hwnd) {
 static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 	switch (msg) {
 		case WM_APP_STARTUP:
-			SetTimer(hwnd, TIMER_STARTUP, 800, nullptr);
+			SetTimer(hwnd, TIMER_STARTUP, 100, nullptr);
 			return 0;
 		case WM_APP_ENTER:
 			enter_dock(true);
@@ -862,17 +887,31 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 			if (wp == TIMER_HOST_OPS) {
 				host_ops_on_timer();
 			} else if (wp == TIMER_STARTUP) {
+				// 本体のメイン窓が表示されるまで待つ (最大 約20秒)
 				HWND main = find_main_window();
-				if (!main && ++g_startup_tries < 25) return 0; // 本体の準備待ち
+				if ((!main || !IsWindowVisible(main)) && ++g_startup_tries < 200) return 0;
 				KillTimer(hwnd, TIMER_STARTUP);
+				if (!main) {
+					log(L"本体のメイン窓が見つからないまま起動処理を終える");
+					return 0;
+				}
 				g_main = main;
 				subclass_main();
 				// 前回が自由分割で終了、または異常終了した場合は自由分割で始める
 				if (g_settings.resume || g_settings.session_active) {
-					log(L"前回の状態を引き継いで自由分割を開始 (resume=" + std::to_wstring(g_settings.resume) +
-						L" session_active=" + std::to_wstring(g_settings.session_active) + L")");
-					enter_dock(true);
+					// 本体の通常の画面が見えないよう、直ちに「準備中」の覆いを掛ける
+					g_scale = dpi_scale(g_main);
+					update_font();
+					show_cover();
+					// 本体の初期化が落ち着くのを少し待ってから開始する
+					SetTimer(hwnd, TIMER_STARTUP_ENTER, 300, nullptr);
 				}
+			} else if (wp == TIMER_STARTUP_ENTER) {
+				KillTimer(hwnd, TIMER_STARTUP_ENTER);
+				log(L"前回の状態を引き継いで自由分割を開始 (resume=" + std::to_wstring(g_settings.resume) +
+					L" session_active=" + std::to_wstring(g_settings.session_active) + L")");
+				enter_dock(true);
+				hide_cover();
 			} else if (wp == TIMER_WATCH) {
 				watch();
 			} else if (wp == TIMER_REENTER) {
