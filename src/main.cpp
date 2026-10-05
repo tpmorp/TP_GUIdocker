@@ -59,7 +59,10 @@ EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
 	host->register_edit_menu(reset_name.c_str(), on_reset);
 	static const std::wstring return_name = std::wstring(TPGD_NAME L"\\") + ui::MENU_CHOOSE_RETURN;
 	host->register_edit_menu(return_name.c_str(), on_choose_return);
-	static const std::wstring drop_name = std::wstring(TPGD_NAME L"\\") + ui::MENU_DROP_STYLE;
+	// ドラッグ時の表示の方式も1つの項目で切り替える (文字は今の方式を示す)
+	int style = g_settings.drop_style >= 0 ? g_settings.drop_style : ui::DROP_STYLE;
+	static const std::wstring drop_name = std::wstring(TPGD_NAME L"\\") +
+		(style == 0 ? ui::MENU_DROP_STYLE_COMPASS : ui::MENU_DROP_STYLE_REGION);
 	host->register_edit_menu(drop_name.c_str(), on_drop_style);
 
 	// 本体の起動完了後に、前回の状態を引き継ぐ

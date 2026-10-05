@@ -19,8 +19,10 @@ constexpr const wchar_t* MENU_DISABLE = L"TP_GUIdockerを無効化";
 constexpr const wchar_t* MENU_RESET = L"配置を初期状態に戻す";
 // 「TP_GUIdocker」メニューの項目 [実装済み]
 constexpr const wchar_t* MENU_CHOOSE_RETURN = L"無効時のレイアウトを選ぶ";
-// 「TP_GUIdocker」メニューの項目 (落とし先の見せ方を切り替える) [段階2で実装]
-constexpr const wchar_t* MENU_DROP_STYLE = L"落とし先の表示を切り替え";
+// 「TP_GUIdocker」メニューの切り替え項目 (十字ボタン式の時。選ぶと区画の領域式に切り替わる) [実装済み]
+constexpr const wchar_t* MENU_DROP_STYLE_COMPASS = L"ドラッグ時の表示:十字ボタン式";
+// 同上 (区画の領域式の時。選ぶと十字ボタン式に切り替わる) [実装済み]
+constexpr const wchar_t* MENU_DROP_STYLE_REGION = L"ドラッグ時の表示:区画の領域式";
 // 「戻り先レイアウトを選ぶ」の一覧の先頭 [実装済み]
 constexpr const wchar_t* RETURN_AUTO = L"自動 (有効化する直前の配置)";
 // 起動時、準備が整うまで本体の画面を覆う表示 [実装済み]
@@ -55,33 +57,29 @@ constexpr const wchar_t* REASON_MISSING = L"一部のパネルが本体に切り
 constexpr const wchar_t* REASON_CAPTURE = L"パネル(%s)を取り込めませんでした。";
 // 有効中にメディアエクスプローラーを開こうとした時の案内 [実装済み]
 constexpr const wchar_t* EXPLORER_NOTICE = L"メディアエクスプローラーは、TP_GUIdockerの有効中は使えません。\n「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdockerを無効化」で標準の画面に戻すと使えます。";
-// タブの右クリックメニュー [段階2で実装]
+// タブの右クリックメニュー [実装済み]
 constexpr const wchar_t* TAB_FLOAT = L"分離する";
-// タブの右クリックメニュー [段階2で実装]
+// タブの右クリックメニュー [実装済み]
 constexpr const wchar_t* TAB_CLOSE = L"閉じる";
-// タブの右クリックメニュー (下に区画の一覧が出る) [段階2で実装]
+// タブの右クリックメニュー (下に区画の一覧が出る) [実装済み]
 constexpr const wchar_t* TAB_MOVE_TO = L"他の区画へ移動";
-// タブの右クリックメニュー (下に分割の向きが出る) [段階2で実装]
+// タブの右クリックメニュー (下に分割の向きが出る) [実装済み]
 constexpr const wchar_t* TAB_SPLIT = L"この区画を分割";
-// 「この区画を分割」の下の項目 [段階2で実装]
+// 「この区画を分割」の下の項目 [実装済み]
 constexpr const wchar_t* SPLIT_LEFT = L"左に空き区画を作る";
-// 「この区画を分割」の下の項目 [段階2で実装]
+// 「この区画を分割」の下の項目 [実装済み]
 constexpr const wchar_t* SPLIT_RIGHT = L"右に空き区画を作る";
-// 「この区画を分割」の下の項目 [段階2で実装]
+// 「この区画を分割」の下の項目 [実装済み]
 constexpr const wchar_t* SPLIT_TOP = L"上に空き区画を作る";
-// 「この区画を分割」の下の項目 [段階2で実装]
+// 「この区画を分割」の下の項目 [実装済み]
 constexpr const wchar_t* SPLIT_BOTTOM = L"下に空き区画を作る";
-// 「他の区画へ移動」の一覧での区画の呼び名 (%s は区画の表示中パネル名) [段階2で実装]
+// 「他の区画へ移動」の一覧での区画の呼び名 (%s は区画の表示中パネル名) [実装済み]
 constexpr const wchar_t* AREA_NAME_FORMAT = L"%sの区画";
-// 同上 (空き区画の呼び名。%d は番号) [段階2で実装]
+// 同上 (空き区画の呼び名。%d は番号) [実装済み]
 constexpr const wchar_t* AREA_NAME_EMPTY = L"空き区画%d";
-// 落とし先の表示の切り替え時の知らせ [段階2で実装]
-constexpr const wchar_t* DROP_STYLE_COMPASS = L"落とし先の表示:十字ボタン式";
-// 同上 [段階2で実装]
-constexpr const wchar_t* DROP_STYLE_REGION = L"落とし先の表示:区画の領域式";
-// 空き区画の右クリックメニュー [段階2で実装]
+// 空き区画の右クリックメニュー [実装済み]
 constexpr const wchar_t* AREA_CLOSE = L"この区画を閉じる";
-// 照合できなかった浮いた窓を区画へ入れようとした時の知らせ [段階2で実装]
+// 照合できなかった浮いた窓を区画へ入れようとした時の知らせ [実装済み]
 constexpr const wchar_t* DOCK_UNKNOWN_PANEL = L"このパネルは識別できないため、区画に入れられません。\n一度閉じて「表示」メニューから開き直してください。";
 
 //---------------------------------------------------------------------
@@ -104,32 +102,32 @@ constexpr int FLOAT_H = 420;
 // 選択中のタブの文字色: 本体設定 (Text) (本体設定に連動)
 // 選択されていないタブの文字色: 本体設定 (TextDisable) (本体設定に連動)
 // 区画の間の色: 本体設定 (WindowSeparator) (本体設定に連動)
-// 落とし先の予告表示の色 (#5A8CFF) [段階2で実装]
+// 配置ガイドの予告表示の色 (#5A8CFF) [実装済み]
 constexpr COLORREF DROP_HIGHLIGHT = 0xFF8C5A;
-// 落とし先の予告表示の濃さ (% (0=透明)) [段階2で実装]
+// 配置ガイドの予告表示の濃さ (% (0=透明)) [実装済み]
 constexpr int DROP_ALPHA = 35;
-// 十字ボタン式のボタン1つの大きさ (px (96dpi換算)) [段階2で実装]
+// 十字ボタン式のボタン1つの大きさ (px (96dpi換算)) [実装済み]
 constexpr int COMPASS_BUTTON = 48;
-// 区画の領域式で、上下左右と判定する幅 (% (区画の幅・高さに対する割合)) [段階2で実装]
+// 区画の領域式で、上下左右と判定する幅 (% (区画の幅・高さに対する割合)) [実装済み]
 constexpr int REGION_EDGE = 30;
-// ドラッグ中のタブの影の濃さ (% (0=透明)) [段階2で実装]
+// ドラッグ中のタブの影の濃さ (% (0=透明)) [実装済み]
 constexpr int DRAG_GHOST_ALPHA = 60;
 
 //---------------------------------------------------------------------
 //	動作
 //---------------------------------------------------------------------
 
-// タブのドラッグを始める長押しの時間 (ミリ秒) [段階2で実装]
+// タブのドラッグを始める長押しの時間 (ミリ秒) [実装済み]
 constexpr int LONG_PRESS_MS = 300;
-// 長押しの後、ドラッグとみなす移動量 (px (96dpi換算)) [段階2で実装]
+// 長押しの後、ドラッグとみなす移動量 (px (96dpi換算)) [実装済み]
 constexpr int DRAG_START_PX = 4;
-// 落とし先の見せ方: 十字ボタン式 [段階2で実装]
+// 配置ガイドの方式: 十字ボタン式 [実装済み]
 constexpr int DROP_STYLE = 0;
-// 入れ物の外でタブを放した時: 浮いた窓にする [段階2で実装]
+// 入れ物の外でタブを放した時: 浮いた窓にする [実装済み]
 constexpr int DROP_OUTSIDE = 1;
-// 区画が空になった時: 自動で閉じて隣が広がる [段階2で実装]
+// 区画が空になった時: 自動で閉じて隣が広がる [実装済み]
 constexpr int EMPTY_AREA_CLOSE = 1;
-// ドラッグを取り消す操作: Esc キー [段階2で実装]
+// ドラッグを取り消す操作: Esc キー [実装済み]
 // 有効中に「表示」から開いたパネル: 浮いた窓で画面中央に出す [実装済み]
 
 } // namespace tpgd::ui

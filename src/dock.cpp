@@ -1188,6 +1188,20 @@ static void update_toggle_menu() {
 	SetMenuItemInfoW(menu, id, FALSE, &mii);
 }
 
+// 「ドラッグ時の表示」の項目の文字を、今の方式に合わせる
+static void update_drop_style_menu() {
+	HWND main = g_main ? g_main : find_main_window();
+	HMENU bar = main ? GetMenu(main) : nullptr;
+	if (!bar) return;
+	HMENU menu = nullptr;
+	UINT id = 0;
+	if (!find_menu_item_by_text(bar, ui::MENU_DROP_STYLE_COMPASS, ui::MENU_DROP_STYLE_REGION, menu, id)) return;
+	MENUITEMINFOW mii = { sizeof(mii) };
+	mii.fMask = MIIM_STRING;
+	mii.dwTypeData = (LPWSTR)(drop_style() == 0 ? ui::MENU_DROP_STYLE_COMPASS : ui::MENU_DROP_STYLE_REGION);
+	SetMenuItemInfoW(menu, id, FALSE, &mii);
+}
+
 static void reset_tree() {
 	g_root = default_tree();
 	if (g_active) {
@@ -1364,7 +1378,8 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 		case WM_APP_TOGGLE_DROP_STYLE:
 			g_settings.drop_style = (drop_style() == 0) ? 1 : 0;
 			g_settings.save();
-			notify(g_settings.drop_style == 0 ? ui::DROP_STYLE_COMPASS : ui::DROP_STYLE_REGION, MB_ICONINFORMATION);
+			update_drop_style_menu();
+			log(std::wstring(L"ドラッグ時の表示を切り替え: ") + (g_settings.drop_style == 0 ? L"十字ボタン式" : L"区画の領域式"));
 			return 0;
 		case WM_APP_DOCK_FLOAT: {
 			DropTarget t = g_pending_dock;
