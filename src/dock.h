@@ -16,12 +16,8 @@ void dock_cleanup_legacy();
 void dock_request_startup();
 
 // メニューからの依頼 (編集セクション外で実行するため入れ物の窓へ依頼する)
-// 有効化・無効化の切り替え (メニュー項目は1つで、状態に応じて文字が変わる)
+// 有効化・無効化の切り替え (メニュー項目は1つで、状態に応じて ui::MENU_ENABLE / ui::MENU_DISABLE に書き換える)
 void dock_request_toggle();
-
-// 切り替え項目の文字 (無効中に表示するもの。有効中は無効化の文字に書き換える)
-constexpr const wchar_t* TOGGLE_LABEL_ENABLE = TPGD_NAME L" を有効化";
-constexpr const wchar_t* TOGGLE_LABEL_DISABLE = TPGD_NAME L" を無効化";
 void dock_request_reset_tree();
 void dock_request_choose_return_layout();
 

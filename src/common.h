@@ -35,4 +35,7 @@ std::wstring describe(HWND h);
 // 窓の題名
 std::wstring window_text(HWND h);
 
+// 文言中の最初の %s を value に置き換える (文言の定義は ui_spec.h)
+std::wstring format_s(const std::wstring& text, const std::wstring& value);
+
 } // namespace tpgd

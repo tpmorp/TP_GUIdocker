@@ -42,6 +42,13 @@ std::wstring window_text(HWND h) {
 	return text;
 }
 
+std::wstring format_s(const std::wstring& text, const std::wstring& value) {
+	std::wstring out = text;
+	auto pos = out.find(L"%s");
+	if (pos != std::wstring::npos) out.replace(pos, 2, value);
+	return out;
+}
+
 std::wstring describe(HWND h) {
 	wchar_t cls[128] = {};
 	GetClassNameW(h, cls, 128);

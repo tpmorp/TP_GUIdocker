@@ -16,6 +16,7 @@
 #include "layout_file.h"
 #include "settings.h"
 #include "tree.h"
+#include "ui_spec.h"
 
 #include <algorithm>
 #include <memory>
@@ -47,9 +48,6 @@ enum : UINT_PTR {
 constexpr UINT_PTR PANEL_SUBCLASS_ID = 0x7447;
 constexpr UINT_PTR MAIN_SUBCLASS_ID = 0x7448;
 constexpr int OFFSCREEN = -30000;   // 非表示タブのパネルを置く座標
-constexpr int MIN_PANE = 60;        // 分割の最小サイズ (96dpi 換算)
-constexpr int FLOAT_W = 640;        // 切り離し窓の既定の大きさ (96dpi 換算)
-constexpr int FLOAT_H = 420;
 
 //---------------------------------------------------------------------
 //	状態
@@ -198,7 +196,7 @@ static void relayout() {
 	g_tab_hits.clear();
 	HDC dc = GetDC(g_container);
 	HGDIOBJ old = SelectObject(dc, g_font);
-	int pad = scaled(10);
+	int pad = scaled(ui::TAB_PADDING);
 	for_each_leaf(g_root.get(), [&](Node* leaf) {
 		if (!is_present(leaf->active)) {
 			leaf->active.clear();
@@ -492,8 +490,7 @@ static void abort_enter(const std::wstring& reason, bool interactive) {
 	g_settings.session_active = false;
 	g_settings.save();
 	if (interactive) {
-		notify(L"TP_GUIdocker を有効化できませんでした。\n\n理由: " + reason +
-			(restored ? L"\n\n標準の画面に戻しました。" : L"\n\n「表示」→「レイアウト」から普段の配置を選んで戻してください。"));
+		notify(ui::FAIL_TITLE + reason + (restored ? ui::FAIL_RESTORED : ui::FAIL_NOT_RESTORED));
 	}
 }
 
@@ -516,15 +513,11 @@ static bool enter_dock(bool interactive) {
 
 	// 本体の更新を検知したら、利用者に確認する (安全装置)
 	if (g_settings.verified_version != g_host_version) {
-		wchar_t msg[512];
+		wchar_t msg[1024];
 		if (g_settings.verified_version == 0) {
-			swprintf_s(msg, L"TP_GUIdocker を有効化します。\n\n"
-				L"本体の画面に手を加える機能のため、不具合が起きた場合は「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdocker を無効化」で元に戻せます。\n\n"
-				L"有効化しますか？ (本体バージョン %lu)", g_host_version);
+			swprintf_s(msg, ui::CONFIRM_FIRST, g_host_version);
 		} else {
-			swprintf_s(msg, L"AviUtl2 本体が更新されています (%lu → %lu)。\n\n"
-				L"TP_GUIdocker はこのバージョンで未確認です。不具合が起きる可能性があります。\n"
-				L"有効化しますか？", g_settings.verified_version, g_host_version);
+			swprintf_s(msg, ui::CONFIRM_HOST_UPDATED, g_settings.verified_version, g_host_version);
 		}
 		if (MessageBoxW(g_main, msg, TPGD_NAME, MB_YESNO | MB_ICONQUESTION) != IDYES) {
 			g_settings.resume = false;
@@ -548,14 +541,14 @@ static bool enter_dock(bool interactive) {
 
 	// 1. 現在の配置を本体自身に保存させる (戻り先)
 	if (!host_create_layout(g_main, g_container, AUTO_RETURN_LAYOUT)) {
-		abort_enter(L"現在の配置を本体に保存させることができませんでした。", interactive);
+		abort_enter(ui::REASON_SAVE_CURRENT, interactive);
 		return false;
 	}
 
 	// 2. 自由分割用レイアウトの枠を本体に作らせる (メニューに無い場合のみ)
 	if (!find_menu_command(g_main, { L"表示", L"レイアウト", DOCK_LAYOUT })) {
 		if (!host_create_layout(g_main, g_container, DOCK_LAYOUT)) {
-			abort_enter(L"TP_GUIdocker 用のレイアウトを本体に登録できませんでした。", interactive);
+			abort_enter(ui::REASON_REGISTER, interactive);
 			return false;
 		}
 	}
@@ -572,7 +565,7 @@ static bool enter_dock(bool interactive) {
 	// 4. 自由分割用レイアウトの中身を生成する
 	IniDoc base;
 	if (!base.load(layout_path(AUTO_RETURN_LAYOUT))) {
-		abort_enter(L"保存した配置を読み込めませんでした。", interactive);
+		abort_enter(ui::REASON_READ_SAVED, interactive);
 		return false;
 	}
 	auto is_visible = [](const std::wstring& key) {
@@ -582,9 +575,9 @@ static bool enter_dock(bool interactive) {
 	MONITORINFO mi = { sizeof(mi) };
 	if (GetMonitorInfoW(MonitorFromWindow(g_main, MONITOR_DEFAULTTOPRIMARY), &mi)) work = mi.rcWork;
 	POINT origin = { work.left + scaled(40), work.top + scaled(40) };
-	DockLayoutPlan plan = build_dock_layout(base, is_visible, origin, scaled(FLOAT_W), scaled(FLOAT_H));
+	DockLayoutPlan plan = build_dock_layout(base, is_visible, origin, scaled(ui::FLOAT_W), scaled(ui::FLOAT_H));
 	if (!plan.doc.save(layout_path(DOCK_LAYOUT))) {
-		abort_enter(L"TP_GUIdocker 用のレイアウトを書き出せませんでした。", interactive);
+		abort_enter(ui::REASON_WRITE, interactive);
 		return false;
 	}
 	g_slots = plan.slots;
@@ -597,7 +590,7 @@ static bool enter_dock(bool interactive) {
 	// 5. 適用する (本体のエラー表示を監視)
 	ApplyResult applied = host_apply_layout(g_main, g_container, DOCK_LAYOUT);
 	if (!applied.ok()) {
-		abort_enter(applied.in_menu ? L"本体がレイアウトの読み込みに失敗しました。" : L"TP_GUIdocker 用のレイアウトがメニューに見つかりません。", interactive);
+		abort_enter(applied.in_menu ? ui::REASON_LOAD_FAILED : ui::REASON_NOT_IN_MENU, interactive);
 		return false;
 	}
 
@@ -619,7 +612,7 @@ static bool enter_dock(bool interactive) {
 		if (!ok) missing += L" " + k;
 	}
 	if (!missing.empty()) {
-		abort_enter(L"一部のパネルが本体に切り離されませんでした (" + missing + L" )。", interactive);
+		abort_enter(format_s(ui::REASON_MISSING, missing), interactive);
 		return false;
 	}
 
@@ -629,7 +622,7 @@ static bool enter_dock(bool interactive) {
 	for (auto& [key, h] : found) {
 		if (find_leaf_with(g_root.get(), key)) {
 			if (!capture_panel(h, key)) {
-				abort_enter(L"パネル (" + key + L") を取り込めませんでした。", interactive);
+				abort_enter(format_s(ui::REASON_CAPTURE, key), interactive);
 				return false;
 			}
 		} else {
@@ -705,8 +698,7 @@ static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 		case WM_COMMAND:
 			// メディアエクスプローラーは切り離せない (本体の仕様) ため、自由分割中は開かせない
 			if (g_active && HIWORD(wp) == 0 && g_explorer_cmds.count(LOWORD(wp))) {
-				notify(L"メディアエクスプローラーは、TP_GUIdocker の有効中は使えません。\n"
-					L"「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdocker を無効化」で標準の画面に戻すと使えます。", MB_ICONINFORMATION);
+				notify(ui::EXPLORER_NOTICE, MB_ICONINFORMATION);
 				return 0;
 			}
 			break;
@@ -750,7 +742,7 @@ static void choose_return_layout() {
 	names.erase(std::remove_if(names.begin(), names.end(), [](const std::wstring& n) {
 		return n.rfind(TPGD_NAME, 0) == 0;
 	}), names.end());
-	AppendMenuW(menu, MF_STRING | (g_settings.return_layout.empty() ? MF_CHECKED : 0), 1, L"自動 (有効化する直前の配置)");
+	AppendMenuW(menu, MF_STRING | (g_settings.return_layout.empty() ? MF_CHECKED : 0), 1, ui::RETURN_AUTO);
 	AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 	for (size_t i = 0; i < names.size(); i++) {
 		AppendMenuW(menu, MF_STRING | (g_settings.return_layout == names[i] ? MF_CHECKED : 0), 100 + i, names[i].c_str());
@@ -797,11 +789,11 @@ static void update_toggle_menu() {
 	if (!bar) return;
 	HMENU menu = nullptr;
 	UINT id = 0;
-	if (!find_menu_item_by_text(bar, TOGGLE_LABEL_ENABLE, TOGGLE_LABEL_DISABLE, menu, id)) {
+	if (!find_menu_item_by_text(bar, ui::MENU_ENABLE, ui::MENU_DISABLE, menu, id)) {
 		log(L"切り替え項目がメニューに見つからない");
 		return;
 	}
-	const wchar_t* label = g_active ? TOGGLE_LABEL_DISABLE : TOGGLE_LABEL_ENABLE;
+	const wchar_t* label = g_active ? ui::MENU_DISABLE : ui::MENU_ENABLE;
 	MENUITEMINFOW mii = { sizeof(mii) };
 	mii.fMask = MIIM_STRING;
 	mii.dwTypeData = (LPWSTR)label;
@@ -868,7 +860,7 @@ static void paint(HWND hwnd) {
 		fill(rc, c_bg);
 		SetTextColor(dc, c_text_dis);
 		RECT r = rc;
-		DrawTextW(dc, TPGD_NAME L" を有効化しています…", -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		DrawTextW(dc, ui::COVER, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 	} else if (g_root) {
 		for_each_leaf(g_root.get(), [&](Node* leaf) {
 			fill(leaf->tabs, c_tabbar);
@@ -876,7 +868,7 @@ static void paint(HWND hwnd) {
 				fill(leaf->body, c_bg);
 				SetTextColor(dc, c_text_dis);
 				RECT r = leaf->body;
-				DrawTextW(dc, L"(パネルなし)", -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+				DrawTextW(dc, ui::EMPTY_AREA, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 			}
 		});
 		for (auto& t : g_tab_hits) {
@@ -1007,7 +999,7 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				const RECT& r = g_drag->rect;
 				int total = (g_drag->vertical ? (r.bottom - r.top) : (r.right - r.left)) - gap_size();
 				int pos = g_drag->vertical ? (pt.y - r.top) : (pt.x - r.left);
-				int lo = scaled(MIN_PANE), hi = total - scaled(MIN_PANE);
+				int lo = scaled(ui::MIN_PANE), hi = total - scaled(ui::MIN_PANE);
 				if (total > 0 && hi > lo) {
 					pos = std::clamp(pos, lo, hi);
 					g_drag->ratio = (double)pos / total;
