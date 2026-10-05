@@ -12,7 +12,7 @@
 #include "config2.h"
 
 #define TPGD_NAME L"TP_GUIdocker"
-#define TPGD_VERSION L"0.2.3"
+#define TPGD_VERSION L"0.2.4"
 
 namespace tpgd {
 

@@ -38,8 +38,7 @@ EXTERN_C __declspec(dllexport) COMMON_PLUGIN_TABLE* GetCommonPluginTable(void) {
 }
 
 // メニューは編集セクション内で呼ばれるため、実際の処理は入れ物の窓へ依頼して後で行う
-static void on_enter(EDIT_SECTION*) { dock_request_enter(); }
-static void on_exit(EDIT_SECTION*) { dock_request_exit(); }
+static void on_toggle(EDIT_SECTION*) { dock_request_toggle(); }
 static void on_reset(EDIT_SECTION*) { dock_request_reset_tree(); }
 static void on_choose_return(EDIT_SECTION*) { dock_request_choose_return_layout(); }
 
@@ -50,8 +49,10 @@ EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
 	install_menu_hooks();
 	if (!dock_init()) return;
 
-	host->register_edit_menu(TPGD_NAME L"\\" TPGD_NAME L" を有効化", on_enter);
-	host->register_edit_menu(TPGD_NAME L"\\" TPGD_NAME L" を無効化", on_exit);
+	// 有効化・無効化は1つの項目で切り替える (文字は状態に応じて書き換える)
+	// ※ 本体が名前の文字列を保持する場合に備え、プログラム終了まで残る文字列を渡す
+	static const std::wstring toggle_name = std::wstring(TPGD_NAME L"\\") + TOGGLE_LABEL_ENABLE;
+	host->register_edit_menu(toggle_name.c_str(), on_toggle);
 	host->register_edit_menu(TPGD_NAME L"\\配置を初期状態に戻す", on_reset);
 	host->register_edit_menu(TPGD_NAME L"\\戻り先レイアウトを選ぶ", on_choose_return);
 

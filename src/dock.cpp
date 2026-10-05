@@ -31,8 +31,7 @@ namespace tpgd {
 
 enum : UINT {
 	WM_APP_STARTUP = WM_APP + 1,
-	WM_APP_ENTER,
-	WM_APP_EXIT,
+	WM_APP_TOGGLE,
 	WM_APP_RESET_TREE,
 	WM_APP_CHOOSE_RETURN,
 	WM_APP_RELAYOUT,
@@ -772,6 +771,43 @@ static void choose_return_layout() {
 	log(L"戻り先レイアウト: " + g_settings.effective_return_layout());
 }
 
+// メニューの中から、文字が一致する項目を探す (サブメニューもたどる)。見つかれば項目のあるメニューと番号を返す
+static bool find_menu_item_by_text(HMENU menu, const wchar_t* a, const wchar_t* b, HMENU& out_menu, UINT& out_id) {
+	int n = GetMenuItemCount(menu);
+	for (int i = 0; i < n; i++) {
+		if (HMENU sub = GetSubMenu(menu, i)) {
+			if (find_menu_item_by_text(sub, a, b, out_menu, out_id)) return true;
+			continue;
+		}
+		wchar_t buf[256] = {};
+		GetMenuStringW(menu, i, buf, 256, MF_BYPOSITION);
+		if (wcscmp(buf, a) == 0 || wcscmp(buf, b) == 0) {
+			out_menu = menu;
+			out_id = GetMenuItemID(menu, i);
+			return true;
+		}
+	}
+	return false;
+}
+
+// 切り替え項目の文字を、現在の状態に合わせる (無効中:「有効化」 / 有効中:「無効化」)
+static void update_toggle_menu() {
+	HWND main = g_main ? g_main : find_main_window();
+	HMENU bar = main ? GetMenu(main) : nullptr;
+	if (!bar) return;
+	HMENU menu = nullptr;
+	UINT id = 0;
+	if (!find_menu_item_by_text(bar, TOGGLE_LABEL_ENABLE, TOGGLE_LABEL_DISABLE, menu, id)) {
+		log(L"切り替え項目がメニューに見つからない");
+		return;
+	}
+	const wchar_t* label = g_active ? TOGGLE_LABEL_DISABLE : TOGGLE_LABEL_ENABLE;
+	MENUITEMINFOW mii = { sizeof(mii) };
+	mii.fMask = MIIM_STRING;
+	mii.dwTypeData = (LPWSTR)label;
+	SetMenuItemInfoW(menu, id, FALSE, &mii);
+}
+
 static void reset_tree() {
 	g_root = default_tree();
 	if (g_active) {
@@ -864,14 +900,16 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 		case WM_APP_STARTUP:
 			SetTimer(hwnd, TIMER_STARTUP, 100, nullptr);
 			return 0;
-		case WM_APP_ENTER:
-			enter_dock(true);
-			return 0;
-		case WM_APP_EXIT:
+		case WM_APP_TOGGLE:
 			if (g_busy) return 0;
-			g_settings.resume = false;
-			g_settings.save();
-			exit_dock(true);
+			if (g_active) {
+				g_settings.resume = false;
+				g_settings.save();
+				exit_dock(true);
+			} else {
+				enter_dock(true);
+			}
+			update_toggle_menu();
 			return 0;
 		case WM_APP_RESET_TREE:
 			if (!g_busy) reset_tree();
@@ -897,7 +935,8 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				}
 				g_main = main;
 				subclass_main();
-				// 前回が自由分割で終了、または異常終了した場合は自由分割で始める
+				update_toggle_menu();
+				// 前回が有効のまま終了、または異常終了した場合は有効化して始める
 				if (g_settings.resume || g_settings.session_active) {
 					// 本体の通常の画面が見えないよう、直ちに「準備中」の覆いを掛ける
 					g_scale = dpi_scale(g_main);
@@ -912,6 +951,7 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 					L" session_active=" + std::to_wstring(g_settings.session_active) + L")");
 				enter_dock(true);
 				hide_cover();
+				update_toggle_menu();
 			} else if (wp == TIMER_WATCH) {
 				watch();
 			} else if (wp == TIMER_REENTER) {
@@ -919,6 +959,7 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				if (!g_main_destroying && g_main && IsWindow(g_main)) {
 					log(L"本体の終了が取り消されたため、再び有効化する");
 					enter_dock(false);
+					update_toggle_menu();
 				}
 			}
 			return 0;
@@ -1035,8 +1076,7 @@ void dock_cleanup_legacy() {
 }
 
 void dock_request_startup() { if (g_container) PostMessageW(g_container, WM_APP_STARTUP, 0, 0); }
-void dock_request_enter() { if (g_container) PostMessageW(g_container, WM_APP_ENTER, 0, 0); }
-void dock_request_exit() { if (g_container) PostMessageW(g_container, WM_APP_EXIT, 0, 0); }
+void dock_request_toggle() { if (g_container) PostMessageW(g_container, WM_APP_TOGGLE, 0, 0); }
 void dock_request_reset_tree() { if (g_container) PostMessageW(g_container, WM_APP_RESET_TREE, 0, 0); }
 void dock_request_choose_return_layout() { if (g_container) PostMessageW(g_container, WM_APP_CHOOSE_RETURN, 0, 0); }
 
