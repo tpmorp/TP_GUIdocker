@@ -10,3 +10,6 @@ out/
 backup/
 tools/probe_result_*.txt
 *.log
+
+# 利用者が置いた書体の配布物 (再配布しない)
+/*.zip
