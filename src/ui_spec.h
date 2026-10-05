@@ -159,8 +159,8 @@ constexpr int MIN_PANE = 60;
 constexpr int FLOAT_W = 640;
 // 浮いた窓の既定の高さ (px (96dpi換算)) [実装済み]
 constexpr int FLOAT_H = 420;
-// タブ・ワークスペースの帯の文字: メニューバーと同じ高さ (-1) [実装済み]
-constexpr int FONT = -1;
+// タブ・ワークスペースの帯の文字の書体: IBM Plex Sans JP (空: メニューバーと同じ書体) [実装済み]
+constexpr const wchar_t* FONT = L"IBM Plex Sans JP";
 // タブ帯の背景色: 本体設定 (Grouping) (本体設定に連動)
 // 選択中のタブの背景色: 本体設定 (GroupingSelect) (本体設定に連動)
 // 選択中のタブの文字色: 本体設定 (Text) (本体設定に連動)

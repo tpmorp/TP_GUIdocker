@@ -55,6 +55,9 @@ py -3 tools\make_samples.py          :: プラグインの「見本を書き出�
 ### 画面の文言・見た目・動作の値
 すべて `docs/ui_spec.json` を元データとし、`tools/gen_ui_spec.py` で `src/ui_spec.h`（`tpgd::ui::` の定数）と指示書（Excel）を生成する。`ui_spec.h` は直接編集しない。ユーザーは指示書の「修正指示」欄で指示し、反映したものは `ui_spec.json` の `history` に記録すると指示書の欄から消える（「反映の記録」シートに残る）。指示書が Excel で開かれていると更新は見送られる。
 
+### 帯の書体
+帯とタブの文字は指示書の `FONT`（現在 IBM Plex Sans JP、大きさはメニューバーの文字と同じ）。プラグインは起動時に DLL と同じ場所の `TP_GUIdocker_フォント` フォルダの書体をプロセス内だけで読み込む（`AddFontResourceExW` の `FR_PRIVATE`、Windows へはインストールしない）。配布用の書体と許諾文書は `dist/TP_GUIdocker_フォント`（SIL Open Font License 1.1。許諾文書を必ず同梱し、書体を改変・改名しない）。書体が見つからない時はメニューバーと同じ書体で描く。
+
 ### 安全装置
 - 有効化の各段階で失敗したら `abort_enter` で全返却して標準画面へ戻す。本体のバージョンが変わったら利用者に確認する。
 - 自由分割中の印（`session_active`）が残っていれば異常終了とみなし、まず元の配置へ戻してから再開する。

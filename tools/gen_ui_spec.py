@@ -88,6 +88,10 @@ def generate_header(spec: dict) -> str:
         elif re.fullmatch(r"-?\d+", v):
             lines.append(f"// {d['item']} ({d['unit']}) [{d['status']}]")
             lines.append(f"constexpr int {d['id']} = {v};")
+        elif d["unit"] == "書体":
+            face = "" if v == "メニューバーと同じ" else v
+            lines.append(f"// {d['item']}: {v} (空: メニューバーと同じ書体) [{d['status']}]")
+            lines.append(f"constexpr const wchar_t* {d['id']} = {cpp_wide_literal(face)};")
         elif v == "メニューバーと同じ":
             lines.append(f"// {d['item']}: メニューバーと同じ高さ (-1) [{d['status']}]")
             lines.append(f"constexpr int {d['id']} = -1;")

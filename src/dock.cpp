@@ -205,7 +205,52 @@ static int tab_height() { return bar_size(ui::TAB_HEIGHT); }
 static int ws_bar_height() { return bar_size(ui::WS_BAR_HEIGHT); }
 static int footer_height() { return style_size("FooterHeight", 24, g_scale); }
 
-// 帯の文字: メニューバーと同じ文字 (Windows がメニューに使う文字の種類と大きさ。今の表示倍率のもの)
+// 帯の文字
+// 書体は指示書の FONT (空ならメニューバーと同じ書体)、大きさはメニューバーの文字と同じ (今の表示倍率のもの)。
+// パソコンに無い書体は、DLL と同じ場所の「TP_GUIdocker_フォント」フォルダに置けば、プラグインの中だけで読み込んで使う
+static std::vector<std::wstring> g_private_fonts;
+
+static int CALLBACK font_found_proc(const LOGFONTW*, const TEXTMETRICW*, DWORD, LPARAM lp) {
+	*(bool*)lp = true;
+	return 0;
+}
+
+static bool font_exists(const wchar_t* face) {
+	LOGFONTW lf = {};
+	lf.lfCharSet = DEFAULT_CHARSET;
+	wcsncpy_s(lf.lfFaceName, face, _TRUNCATE);
+	bool found = false;
+	HDC dc = GetDC(nullptr);
+	EnumFontFamiliesExW(dc, &lf, font_found_proc, (LPARAM)&found, 0);
+	ReleaseDC(nullptr, dc);
+	return found;
+}
+
+// 「TP_GUIdocker_フォント」フォルダの書体を、このプロセスの中だけで使えるようにする
+static void load_private_fonts() {
+	std::wstring dir = module_dir() + L"\\" TPGD_NAME L"_フォント";
+	for (const wchar_t* ext : { L"*.ttf", L"*.otf", L"*.ttc" }) {
+		WIN32_FIND_DATAW fd;
+		HANDLE h = FindFirstFileW((dir + L"\\" + ext).c_str(), &fd);
+		if (h == INVALID_HANDLE_VALUE) continue;
+		do {
+			std::wstring path = dir + L"\\" + fd.cFileName;
+			if (AddFontResourceExW(path.c_str(), FR_PRIVATE, nullptr) > 0) {
+				g_private_fonts.push_back(path);
+				log(L"書体を読み込んだ: " + path);
+			} else {
+				log(L"書体を読み込めなかった: " + path);
+			}
+		} while (FindNextFileW(h, &fd));
+		FindClose(h);
+	}
+}
+
+static void unload_private_fonts() {
+	for (auto& p : g_private_fonts) RemoveFontResourceExW(p.c_str(), FR_PRIVATE, nullptr);
+	g_private_fonts.clear();
+}
+
 static void update_font() {
 	if (g_font) DeleteObject(g_font);
 	g_font = nullptr;
@@ -213,6 +258,18 @@ static void update_font() {
 	UINT dpi = (UINT)(96 * g_scale + 0.5);
 	if (SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0, dpi)) {
 		ncm.lfMenuFont.lfQuality = CLEARTYPE_QUALITY;
+		if (*ui::FONT) {
+			if (font_exists(ui::FONT)) {
+				wcsncpy_s(ncm.lfMenuFont.lfFaceName, ui::FONT, _TRUNCATE);
+				ncm.lfMenuFont.lfWeight = FW_NORMAL;
+				ncm.lfMenuFont.lfItalic = FALSE;
+				ncm.lfMenuFont.lfCharSet = DEFAULT_CHARSET;
+			} else {
+				static bool warned = false;
+				if (!warned) log(std::wstring(L"書体が見つからないため、メニューバーと同じ書体を使う: ") + ui::FONT);
+				warned = true;
+			}
+		}
 		g_font = CreateFontIndirectW(&ncm.lfMenuFont);
 	}
 	if (!g_font) {
@@ -1577,44 +1634,6 @@ const std::vector<FontCandidate>& font_candidates() {
 	return list;
 }
 
-int CALLBACK font_found_proc(const LOGFONTW*, const TEXTMETRICW*, DWORD, LPARAM lp) {
-	*(bool*)lp = true;
-	return 0;
-}
-
-bool font_exists(const wchar_t* face) {
-	LOGFONTW lf = {};
-	lf.lfCharSet = DEFAULT_CHARSET;
-	wcsncpy_s(lf.lfFaceName, face, _TRUNCATE);
-	bool found = false;
-	HDC dc = GetDC(nullptr);
-	EnumFontFamiliesExW(dc, &lf, font_found_proc, (LPARAM)&found, 0);
-	ReleaseDC(nullptr, dc);
-	return found;
-}
-
-// 「TP_GUIdocker_フォント」フォルダの書体を、このプロセスの中だけで使えるようにする
-std::vector<std::wstring> load_private_fonts() {
-	std::vector<std::wstring> loaded;
-	std::wstring dir = module_dir() + L"\\" TPGD_NAME L"_フォント";
-	for (const wchar_t* ext : { L"*.ttf", L"*.otf", L"*.ttc" }) {
-		WIN32_FIND_DATAW fd;
-		HANDLE h = FindFirstFileW((dir + L"\\" + ext).c_str(), &fd);
-		if (h == INVALID_HANDLE_VALUE) continue;
-		do {
-			std::wstring path = dir + L"\\" + fd.cFileName;
-			if (AddFontResourceExW(path.c_str(), FR_PRIVATE, nullptr) > 0) {
-				loaded.push_back(path);
-				log(L"書体を読み込んだ: " + path);
-			} else {
-				log(L"書体を読み込めなかった: " + path);
-			}
-		} while (FindNextFileW(h, &fd));
-		FindClose(h);
-	}
-	return loaded;
-}
-
 // 文字の見本を描いて保存する (大きさ: 帯の文字と、その 1.5 倍)
 bool draw_font_specimen(HFONT small_font, HFONT large_font, const std::wstring& path, double scale) {
 	static const wchar_t* lines[] = {
@@ -1852,7 +1871,6 @@ static void export_samples() {
 	};
 	std::vector<FontShot> font_shots;
 	{
-		std::vector<std::wstring> private_fonts = load_private_fonts();
 		LOGFONTW base = {};
 		GetObjectW(g_font, sizeof(base), &base);
 		HFONT saved_font = g_font;
@@ -1918,7 +1936,6 @@ static void export_samples() {
 		g_font = saved_font;
 		relayout();
 		UpdateWindow(g_container);
-		for (auto& p : private_fonts) RemoveFontResourceExW(p.c_str(), FR_PRIVATE, nullptr);
 	}
 
 	// 位置の記録 (UTF-8)
@@ -2613,6 +2630,7 @@ bool dock_init() {
 		return false;
 	}
 	g_scale = dpi_scale(nullptr);
+	load_private_fonts();
 	update_font();
 
 	// 錠前の絵 (GDI+) と、その説明 (ツールチップ) の準備
@@ -2655,6 +2673,7 @@ void dock_shutdown() {
 	g_container = nullptr;
 	if (g_font) DeleteObject(g_font);
 	g_font = nullptr;
+	unload_private_fonts();
 	if (g_tooltip) DestroyWindow(g_tooltip);
 	g_tooltip = nullptr;
 	if (g_gdiplus_token) Gdiplus::GdiplusShutdown(g_gdiplus_token);
