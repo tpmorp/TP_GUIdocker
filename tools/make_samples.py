@@ -4,6 +4,7 @@ TP_GUIdocker の見本 PDF を作る。
   入力: プラグインの「見本を書き出す」で書き出された撮影画像と位置の記録 (samples.json)
         docs/ui_spec.json (文言・見た目・動作の定義)
   出力: docs/TP_GUIdocker_見本.pdf
+        docs/TP_GUIdocker_フォント比較.pdf (記録にフォントの比較がある場合)
 
 撮影画像の各部分に枠と番号を書き込み、番号ごとに指示書の ID・項目・現在の値を一覧にする。
 メニュー・名前の入力画面・確認の画面は、文言の定義から見本図を描く。
@@ -423,6 +424,144 @@ def cover_page(folder, version):
     return page
 
 
+# ---------------------------------------------------------------------
+#  フォントの比較 (別の PDF: docs/TP_GUIdocker_フォント比較.pdf)
+# ---------------------------------------------------------------------
+
+FONT_OUTPUT = ROOT / "docs" / "TP_GUIdocker_フォント比較.pdf"
+
+
+def zoom(img, factor):
+    """画素をぼかさずに整数倍へ拡大する (文字の描かれ方をそのまま見せる)"""
+    return img.resize((img.width * factor, img.height * factor), Image.NEAREST)
+
+
+def fit(img, max_w, max_h):
+    """枠に収まるよう、整数倍 (拡大) または縮小する"""
+    if img.width <= max_w and img.height <= max_h:
+        k = max(1, min(max_w // img.width, max_h // img.height, 3))
+        return zoom(img, k), k
+    s = min(max_w / img.width, max_h / img.height)
+    return img.resize((max(1, int(img.width * s)), max(1, int(img.height * s))), Image.LANCZOS), s
+
+
+def font_overview_page(fonts, folder, version):
+    page, d = new_page("フォント比較 ― 候補の一覧",
+                       f"プラグイン version {version} で、タブとワークスペースの帯の文字だけを各書体に替えて撮影しました。")
+    y = 130
+    lines = [
+        "・文字の大きさは、今の帯の文字 (メニューバーと同じ) にそろえています。書体によって同じ大きさでも見た目の大きさが違います。",
+        "・パネルの中身 (プレビュー・レイヤー編集など) は本体が描くため、本体の設定 (style.conf の DefaultFamily) の書体のままです。",
+        "・拡大図は画素をぼかさずに拡大しているので、実際の画面での文字の描かれ方 (かすれ・にじみ) をそのまま比べられます。",
+        "・未導入の書体は、プラグインと同じ場所の「TP_GUIdocker_フォント」フォルダに書体のファイルを置いて書き出し直すと撮影されます。",
+    ]
+    for line in lines:
+        d.text((MARGIN, y), line, fill=INK, font=font(19))
+        y += 32
+    y += 16
+    cols = [60, 300, 200, 360, PAGE_W - 2 * MARGIN - 920]
+    heads = ["番号", "候補", "状態", "実際に使われた書体名", "特徴"]
+    d.rectangle((MARGIN, y, PAGE_W - MARGIN, y + 36), fill=TABLE_HEAD)
+    x = MARGIN
+    for w, h in zip(cols, heads):
+        d.text((x + 8, y + 6), h, fill="white", font=font(18, bold=True))
+        x += w
+    y += 42
+    for n, f in enumerate(fonts, start=1):
+        found = bool(f.get("image"))
+        status = "撮影済み" if found else "未導入"
+        cells = [str(n), f["label"], status, f.get("actual", "") or "―", f["note"]]
+        wrapped = [wrap(d, c, font(18), w - 16) for c, w in zip(cells, cols)]
+        h = max(len(l) for l in wrapped) * 26 + 14
+        x = MARGIN
+        for i, (lines_, w) in enumerate(zip(wrapped, cols)):
+            color = MARK if (i == 2 and not found) else INK
+            for k, line in enumerate(lines_):
+                d.text((x + 8, y + 6 + k * 26), line, fill=color, font=font(18, bold=(i == 1)))
+            x += w
+        y += h
+        d.line((MARGIN, y, PAGE_W - MARGIN, y), fill=TABLE_LINE)
+    return page
+
+
+def font_compare_pages(fonts, folder):
+    """全候補の帯とタブを、同じ倍率で縦に並べて比べる"""
+    pages = []
+    factor = 2
+    label_w = 300
+    crop_w = (PAGE_W - 2 * MARGIN - label_w) // factor   # 元画像での切り出し幅
+    title = "フォント比較 ― 帯とタブ (2倍に拡大)"
+    page, d = new_page(title, "上段: ワークスペースの帯 / 中段・下段: タブの帯。画素をぼかさずに2倍にしています。")
+    y = 124
+    for n, f in enumerate(fonts, start=1):
+        strips = []
+        if f.get("image"):
+            img = Image.open(folder / f["image"]).convert("RGB")
+            for rect in [f["bar"]] + f.get("tabs", [])[:2]:
+                l, t, r, b = rect
+                strips.append(zoom(img.crop((l, t, min(r, l + crop_w), b)), factor))
+        block_h = sum(s.height + 8 for s in strips) if strips else 50
+        if y + block_h + 20 > PAGE_H - MARGIN:
+            pages.append(page)
+            page, d = new_page(title + " (続き)")
+            y = 124
+        d.text((MARGIN, y), f"{n}. {f['label']}", fill=INK, font=font(22, bold=True))
+        if strips:
+            d.text((MARGIN, y + 34), f.get("actual", ""), fill=SUB, font=font(16))
+            sy = y
+            for s in strips:
+                page.paste(s, (MARGIN + label_w, sy))
+                sy += s.height + 8
+        else:
+            d.text((MARGIN + label_w, y + 4), "未導入のため撮影なし", fill=MARK, font=font(20))
+        y += max(block_h, 70) + 12
+        d.line((MARGIN, y - 6, PAGE_W - MARGIN, y - 6), fill=TABLE_LINE)
+    pages.append(page)
+    return pages
+
+
+def font_detail_page(n, f, folder):
+    page, d = new_page(f"フォント比較 ― {n}. {f['label']}", f["note"])
+    img = Image.open(folder / f["image"]).convert("RGB")
+    spec = Image.open(folder / f["specimen"]).convert("RGB")
+    # 上: 画面全体 (帯とタブの文字だけがこの書体)
+    d.text((MARGIN, 124), "画面全体 (帯とタブの文字だけがこの書体)", fill=INK, font=font(20, bold=True))
+    shown, _ = fit(img, PAGE_W - 2 * MARGIN, 560)
+    page.paste(shown, (MARGIN, 158))
+    d.rectangle((MARGIN - 1, 157, MARGIN + shown.width, 158 + shown.height), outline=TABLE_LINE)
+    # 下: 文字の見本
+    y = 158 + shown.height + 24
+    d.text((MARGIN, y), "文字の見本 (上3行: 帯の文字の大きさ / 下3行: 1.5倍)", fill=INK, font=font(20, bold=True))
+    sp, k = fit(spec, PAGE_W - 2 * MARGIN, PAGE_H - MARGIN - y - 40)
+    page.paste(sp, (MARGIN, y + 34))
+    note = f"画素をぼかさずに {k} 倍にしています" if isinstance(k, int) and k > 1 else "縮小して載せています"
+    d.text((MARGIN, y + 34 + sp.height + 6), f"実際に使われた書体名: {f.get('actual', '')}　／　{note}", fill=SUB, font=font(16))
+    return page
+
+
+def make_font_pdf(folder, data):
+    fonts = data.get("fonts", [])
+    if not fonts:
+        return
+    pages = [font_overview_page(fonts, folder, data.get("version", ""))]
+    pages.extend(font_compare_pages(fonts, folder))
+    for n, f in enumerate(fonts, start=1):
+        if f.get("image"):
+            pages.append(font_detail_page(n, f, folder))
+    for i, p in enumerate(pages, start=1):
+        ImageDraw.Draw(p).text((PAGE_W - MARGIN - 120, PAGE_H - 40), f"{i} / {len(pages)}", fill=SUB, font=font(18))
+    # 文字の細部を比べるため、画質を上げ、色の間引きもしない
+    opts = dict(save_all=True, append_images=pages[1:], resolution=150, quality=95, subsampling=0)
+    out = FONT_OUTPUT
+    try:
+        pages[0].save(out, **opts)
+    except PermissionError:
+        out = FONT_OUTPUT.with_name(f"{FONT_OUTPUT.stem}_{data.get('version', 'new')}{FONT_OUTPUT.suffix}")
+        pages[0].save(out, **opts)
+        print(f"注意: {FONT_OUTPUT.name} が開かれているため、別名で保存した")
+    print(f"生成: {out} ({len(pages)} ページ)")
+
+
 def main():
     folder = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_INPUT
     data = json.loads((folder / "samples.json").read_text(encoding="utf-8"))
@@ -445,6 +584,7 @@ def main():
         pages[0].save(out, save_all=True, append_images=pages[1:], resolution=150)
         print(f"注意: {OUTPUT.name} が開かれているため、別名で保存した")
     print(f"生成: {out} ({len(pages)} ページ)")
+    make_font_pdf(folder, data)
 
 
 if __name__ == "__main__":

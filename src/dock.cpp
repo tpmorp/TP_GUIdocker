@@ -1492,28 +1492,9 @@ std::wstring json_escape(const std::wstring& s) {
 	return o;
 }
 
-// 画面の矩形を撮影して BMP で保存する (重ね窓も写るよう CAPTUREBLT を使う)
-bool capture_to_bmp(const RECT& r, const std::wstring& path) {
-	int w = r.right - r.left, h = r.bottom - r.top;
-	if (w <= 0 || h <= 0) return false;
-	HDC screen = GetDC(nullptr);
-	HDC mem = CreateCompatibleDC(screen);
-	BITMAPINFO bi = {};
-	bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-	bi.bmiHeader.biWidth = w;
-	bi.bmiHeader.biHeight = h;   // 下から上 (BMP の標準)
-	bi.bmiHeader.biPlanes = 1;
-	bi.bmiHeader.biBitCount = 24;
-	bi.bmiHeader.biCompression = BI_RGB;
-	void* bits = nullptr;
-	HBITMAP bmp = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-	HGDIOBJ old = SelectObject(mem, bmp);
-	BitBlt(mem, 0, 0, w, h, screen, r.left, r.top, SRCCOPY | CAPTUREBLT);
-	GdiFlush();
-	SelectObject(mem, old);
-	DeleteDC(mem);
-	ReleaseDC(nullptr, screen);
-
+// 24 ビットの画像 (下から上の DIB) を BMP で保存する
+bool write_bmp(const BITMAPINFO& bi, const void* bits, const std::wstring& path) {
+	int w = bi.bmiHeader.biWidth, h = bi.bmiHeader.biHeight;
 	DWORD stride = ((w * 3 + 3) & ~3);
 	DWORD image_size = stride * h;
 	BITMAPFILEHEADER fh = {};
@@ -1528,7 +1509,172 @@ bool capture_to_bmp(const RECT& r, const std::wstring& path) {
 			WriteFile(f, bits, image_size, &wr, nullptr);
 		CloseHandle(f);
 	}
+	return ok;
+}
+
+BITMAPINFO dib_info(int w, int h) {
+	BITMAPINFO bi = {};
+	bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+	bi.bmiHeader.biWidth = w;
+	bi.bmiHeader.biHeight = h;   // 下から上 (BMP の標準)
+	bi.bmiHeader.biPlanes = 1;
+	bi.bmiHeader.biBitCount = 24;
+	bi.bmiHeader.biCompression = BI_RGB;
+	return bi;
+}
+
+// 画面の矩形を撮影して BMP で保存する (重ね窓も写るよう CAPTUREBLT を使う)
+bool capture_to_bmp(const RECT& r, const std::wstring& path) {
+	int w = r.right - r.left, h = r.bottom - r.top;
+	if (w <= 0 || h <= 0) return false;
+	HDC screen = GetDC(nullptr);
+	HDC mem = CreateCompatibleDC(screen);
+	BITMAPINFO bi = dib_info(w, h);
+	void* bits = nullptr;
+	HBITMAP bmp = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+	HGDIOBJ old = SelectObject(mem, bmp);
+	BitBlt(mem, 0, 0, w, h, screen, r.left, r.top, SRCCOPY | CAPTUREBLT);
+	GdiFlush();
+	SelectObject(mem, old);
+	DeleteDC(mem);
+	ReleaseDC(nullptr, screen);
+	bool ok = write_bmp(bi, bits, path);
 	DeleteObject(bmp);
+	return ok;
+}
+
+//---------------------------------------------------------------------
+//	フォントの比較 (指示用)
+//	候補の書体ごとに帯とタブを描き直して撮影し、加えて文字の見本を描いて保存する。
+//	未導入の書体は、DLL と同じ場所の「TP_GUIdocker_フォント」フォルダに置けば、プラグインの中だけで読み込む
+//---------------------------------------------------------------------
+
+struct FontCandidate {
+	const wchar_t* label;              // 見本での名前
+	std::vector<const wchar_t*> faces; // 書体名の候補 (英語名・日本語名・配布物ごとの名前)
+	const wchar_t* note;               // 特徴
+};
+
+const std::vector<FontCandidate>& font_candidates() {
+	static const std::vector<FontCandidate> list = {
+		{ L"游ゴシック UI", { L"Yu Gothic UI", L"游ゴシック UI" },
+			L"Windows 10/11 標準の画面用書体。本体の既定 (style.conf の DefaultFamily)" },
+		{ L"BIZ UDPゴシック", { L"BIZ UDPGothic", L"BIZ UDPゴシック" },
+			L"Windows 標準。モリサワの読み間違えにくさを重視した書体" },
+		{ L"Noto Sans JP", { L"Noto Sans JP" },
+			L"Google と Adobe の共同開発。太さを連続的に変えられる新形式の場合あり" },
+		{ L"源ノ角ゴシック", { L"源ノ角ゴシック", L"Source Han Sans", L"Source Han Sans JP", L"源ノ角ゴシック JP" },
+			L"Noto Sans JP と同じ字形。太さごとに別ファイルの形式" },
+		{ L"源暎ゴシック", { L"源暎ゴシックP", L"GenEi Gothic P", L"GenEiGothicP", L"源暎ゴシックP Regular", L"GenEiGothicP Regular" },
+			L"源ノ角ゴシックの派生。字面を詰めて引き締めた書体" },
+		{ L"LINE Seed JP", { L"LINE Seed JP", L"LINE Seed JP_OTF", L"LINE Seed JP_TTF", L"LINE Seed JP App_OTF", L"LINE Seed JP App_TTF" },
+			L"LINE の企業書体。角に丸みのある現代的な書体。太さは4段階" },
+		{ L"IBM Plex Sans JP", { L"IBM Plex Sans JP" },
+			L"IBM の企業書体。理知的で少し柔らかい" },
+		{ L"M PLUS 1p", { L"M PLUS 1p" },
+			L"素直で軽やかな書体。太さは7段階" },
+	};
+	return list;
+}
+
+int CALLBACK font_found_proc(const LOGFONTW*, const TEXTMETRICW*, DWORD, LPARAM lp) {
+	*(bool*)lp = true;
+	return 0;
+}
+
+bool font_exists(const wchar_t* face) {
+	LOGFONTW lf = {};
+	lf.lfCharSet = DEFAULT_CHARSET;
+	wcsncpy_s(lf.lfFaceName, face, _TRUNCATE);
+	bool found = false;
+	HDC dc = GetDC(nullptr);
+	EnumFontFamiliesExW(dc, &lf, font_found_proc, (LPARAM)&found, 0);
+	ReleaseDC(nullptr, dc);
+	return found;
+}
+
+// 「TP_GUIdocker_フォント」フォルダの書体を、このプロセスの中だけで使えるようにする
+std::vector<std::wstring> load_private_fonts() {
+	std::vector<std::wstring> loaded;
+	std::wstring dir = module_dir() + L"\\" TPGD_NAME L"_フォント";
+	for (const wchar_t* ext : { L"*.ttf", L"*.otf", L"*.ttc" }) {
+		WIN32_FIND_DATAW fd;
+		HANDLE h = FindFirstFileW((dir + L"\\" + ext).c_str(), &fd);
+		if (h == INVALID_HANDLE_VALUE) continue;
+		do {
+			std::wstring path = dir + L"\\" + fd.cFileName;
+			if (AddFontResourceExW(path.c_str(), FR_PRIVATE, nullptr) > 0) {
+				loaded.push_back(path);
+				log(L"書体を読み込んだ: " + path);
+			} else {
+				log(L"書体を読み込めなかった: " + path);
+			}
+		} while (FindNextFileW(h, &fd));
+		FindClose(h);
+	}
+	return loaded;
+}
+
+// 文字の見本を描いて保存する (大きさ: 帯の文字と、その 1.5 倍)
+bool draw_font_specimen(HFONT small_font, HFONT large_font, const std::wstring& path, double scale) {
+	static const wchar_t* lines[] = {
+		L"プレビュー編集　レイヤー編集　オブジェクト設定　シーンリスト　色設定",
+		L"ワークスペース1　＋　あいうえお　アイウエオ　漢字の見え方　読み間違い",
+		L"ABCDEFGHIJ abcdefghij 0123456789  1920x1080  29.97fps  00:01:23.45",
+	};
+	COLORREF c_bg = style_color("Grouping", RGB(0x38, 0x38, 0x38));
+	COLORREF c_text = style_color("Text", RGB(0xff, 0xff, 0xff));
+	int pad = (int)(12 * scale + 0.5);
+	HDC screen = GetDC(nullptr);
+	HDC mem = CreateCompatibleDC(screen);
+	ReleaseDC(nullptr, screen);
+
+	// 必要な大きさを測る
+	int w = 0, h = pad;
+	std::vector<int> heights;
+	for (HFONT f : { small_font, large_font }) {
+		HGDIOBJ old = SelectObject(mem, f);
+		for (auto* s : lines) {
+			SIZE sz = {};
+			GetTextExtentPoint32W(mem, s, (int)wcslen(s), &sz);
+			w = std::max<int>(w, sz.cx);
+			heights.push_back(sz.cy + pad / 2);
+			h += sz.cy + pad / 2;
+		}
+		h += pad;
+		SelectObject(mem, old);
+	}
+	w += pad * 2;
+
+	BITMAPINFO bi = dib_info(w, h);
+	void* bits = nullptr;
+	HBITMAP bmp = CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+	if (!bmp) {
+		DeleteDC(mem);
+		return false;
+	}
+	HGDIOBJ old_bmp = SelectObject(mem, bmp);
+	RECT all = { 0, 0, w, h };
+	HBRUSH b = CreateSolidBrush(c_bg);
+	FillRect(mem, &all, b);
+	DeleteObject(b);
+	SetBkMode(mem, TRANSPARENT);
+	SetTextColor(mem, c_text);
+	int y = pad, i = 0;
+	for (HFONT f : { small_font, large_font }) {
+		HGDIOBJ old = SelectObject(mem, f);
+		for (auto* s : lines) {
+			TextOutW(mem, pad, y, s, (int)wcslen(s));
+			y += heights[i++];
+		}
+		y += pad;
+		SelectObject(mem, old);
+	}
+	GdiFlush();
+	bool ok = write_bmp(bi, bits, path);
+	SelectObject(mem, old_bmp);
+	DeleteObject(bmp);
+	DeleteDC(mem);
 	return ok;
 }
 
@@ -1695,6 +1841,86 @@ static void export_samples() {
 		relayout();
 	}
 
+	// 6. フォントの比較 (帯とタブの文字だけを候補の書体に替えて撮影する。大きさは今の帯の文字と同じ)
+	struct FontShot {
+		const FontCandidate* c;
+		std::wstring face;      // 使った書体名 (未導入なら空)
+		std::wstring actual;    // Windows が実際に選んだ書体名
+		std::wstring image, specimen;
+		std::vector<RECT> tabs;
+		RECT bar;
+	};
+	std::vector<FontShot> font_shots;
+	{
+		std::vector<std::wstring> private_fonts = load_private_fonts();
+		LOGFONTW base = {};
+		GetObjectW(g_font, sizeof(base), &base);
+		HFONT saved_font = g_font;
+		int no = 0;
+		for (auto& c : font_candidates()) {
+			no++;
+			FontShot fs{ &c, L"", L"", L"", L"", {}, {} };
+			for (auto* face : c.faces) {
+				if (font_exists(face)) { fs.face = face; break; }
+			}
+			if (fs.face.empty()) {
+				log(std::wstring(L"見本: 未導入の書体 ") + c.label);
+				font_shots.push_back(fs);
+				continue;
+			}
+			LOGFONTW lf = base;
+			lf.lfWeight = FW_NORMAL;
+			lf.lfItalic = FALSE;
+			lf.lfCharSet = DEFAULT_CHARSET;
+			lf.lfQuality = CLEARTYPE_QUALITY;
+			wcsncpy_s(lf.lfFaceName, fs.face.c_str(), _TRUNCATE);
+			HFONT f = CreateFontIndirectW(&lf);
+			LOGFONTW lf_large = lf;
+			lf_large.lfHeight = lf.lfHeight * 3 / 2;
+			HFONT f_large = CreateFontIndirectW(&lf_large);
+			if (!f || !f_large) {
+				if (f) DeleteObject(f);
+				if (f_large) DeleteObject(f_large);
+				font_shots.push_back(fs);
+				continue;
+			}
+			{
+				HDC dc = GetDC(nullptr);
+				HGDIOBJ old = SelectObject(dc, f);
+				wchar_t actual[LF_FACESIZE] = {};
+				GetTextFaceW(dc, LF_FACESIZE, actual);
+				SelectObject(dc, old);
+				ReleaseDC(nullptr, dc);
+				fs.actual = actual;
+			}
+			wchar_t name[32];
+			swprintf_s(name, L"06_font_%02d", no);
+			fs.image = std::wstring(name) + L".bmp";
+			fs.specimen = std::wstring(name) + L"_specimen.bmp";
+
+			g_font = f;
+			relayout();
+			UpdateWindow(g_container);
+			settle();
+			capture_to_bmp(win, dir + L"\\" + fs.image);
+			draw_font_specimen(f, f_large, dir + L"\\" + fs.specimen, g_scale);
+			fs.bar = to_capture(g_bar, origin);
+			for_each_leaf(g_root.get(), [&](Node* l) {
+				if (!IsRectEmpty(&l->tabs)) fs.tabs.push_back(to_capture(l->tabs, origin));
+			});
+			log(L"見本: 書体 " + fs.face + L" (実際: " + fs.actual + L")");
+
+			g_font = saved_font;
+			DeleteObject(f);
+			DeleteObject(f_large);
+			font_shots.push_back(fs);
+		}
+		g_font = saved_font;
+		relayout();
+		UpdateWindow(g_container);
+		for (auto& p : private_fonts) RemoveFontResourceExW(p.c_str(), FR_PRIVATE, nullptr);
+	}
+
 	// 位置の記録 (UTF-8)
 	std::wstring js = L"{\n  \"version\": \"" TPGD_VERSION L"\",\n  \"scenes\": [\n";
 	for (size_t i = 0; i < scenes.size(); i++) {
@@ -1711,6 +1937,24 @@ static void export_samples() {
 			js += L"\"note\": \"" + json_escape(n.note) + L"\"}" + (j + 1 < s.notes.size() ? L",\n" : L"\n");
 		}
 		js += std::wstring(L"    ]}") + (i + 1 < scenes.size() ? L",\n" : L"\n");
+	}
+	js += L"  ],\n  \"fonts\": [\n";
+	auto rect_json = [](const RECT& r) {
+		wchar_t s[96];
+		swprintf_s(s, L"[%ld, %ld, %ld, %ld]", r.left, r.top, r.right, r.bottom);
+		return std::wstring(s);
+	};
+	for (size_t i = 0; i < font_shots.size(); i++) {
+		auto& f = font_shots[i];
+		js += L"    {\"label\": \"" + json_escape(f.c->label) + L"\", \"note\": \"" + json_escape(f.c->note) +
+			L"\", \"face\": \"" + json_escape(f.face) + L"\", \"actual\": \"" + json_escape(f.actual) +
+			L"\", \"image\": \"" + json_escape(f.image) + L"\", \"specimen\": \"" + json_escape(f.specimen) + L"\"";
+		if (!f.image.empty()) {
+			js += L", \"bar\": " + rect_json(f.bar) + L", \"tabs\": [";
+			for (size_t k = 0; k < f.tabs.size(); k++) js += (k ? L", " : L"") + rect_json(f.tabs[k]);
+			js += L"]";
+		}
+		js += std::wstring(L"}") + (i + 1 < font_shots.size() ? L",\n" : L"\n");
 	}
 	js += L"  ]\n}\n";
 	std::string utf8 = wide_to_utf8(js);
