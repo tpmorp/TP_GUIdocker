@@ -43,6 +43,26 @@ static void on_toggle(EDIT_SECTION*) { dock_request_toggle(); }
 static void on_reset(EDIT_SECTION*) { dock_request_reset_tree(); }
 static void on_choose_return(EDIT_SECTION*) { dock_request_choose_return_layout(); }
 static void on_drop_style(EDIT_SECTION*) { dock_request_toggle_drop_style(); }
+static void on_maximize(EDIT_SECTION*) { dock_request_maximize(); }
+static void on_lock(EDIT_SECTION*) { dock_request_toggle_lock(); }
+template <int N> static void on_workspace(EDIT_SECTION*) { dock_request_switch_workspace(N - 1); }
+
+// ワークスペース1〜9の切り替え項目 (本体のショートカットキー設定で割り当てられるよう、メニュー項目として登録する)
+static void register_workspace_menus(HOST_APP_TABLE* host) {
+	static void (*const handlers[])(EDIT_SECTION*) = {
+		on_workspace<1>, on_workspace<2>, on_workspace<3>, on_workspace<4>, on_workspace<5>,
+		on_workspace<6>, on_workspace<7>, on_workspace<8>, on_workspace<9>,
+	};
+	static std::vector<std::wstring> names;
+	int count = std::min<int>(ui::WS_MAX, (int)(sizeof(handlers) / sizeof(handlers[0])));
+	names.reserve(count);
+	for (int i = 0; i < count; i++) {
+		wchar_t item[128];
+		swprintf_s(item, ui::MENU_WS_SWITCH, i + 1);
+		names.push_back(std::wstring(TPGD_NAME L"\\") + ui::MENU_WS_GROUP + L"\\" + item);
+		host->register_edit_menu(names.back().c_str(), handlers[i]);
+	}
+}
 
 EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
 	log(L"===== 起動 version " TPGD_VERSION L" (本体 " + std::to_wstring(g_host_version) + L") =====");
@@ -55,6 +75,12 @@ EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
 	// ※ 本体が名前の文字列を保持する場合に備え、プログラム終了まで残る文字列を渡す
 	static const std::wstring toggle_name = std::wstring(TPGD_NAME L"\\") + ui::MENU_ENABLE;
 	host->register_edit_menu(toggle_name.c_str(), on_toggle);
+	register_workspace_menus(host);
+	static const std::wstring maximize_name = std::wstring(TPGD_NAME L"\\") + ui::MENU_MAXIMIZE;
+	host->register_edit_menu(maximize_name.c_str(), on_maximize);
+	// ロックも1つの項目で切り替える (文字は今の状態を示す)
+	static const std::wstring lock_name = std::wstring(TPGD_NAME L"\\") + (g_settings.locked ? ui::MENU_UNLOCK : ui::MENU_LOCK);
+	host->register_edit_menu(lock_name.c_str(), on_lock);
 	static const std::wstring reset_name = std::wstring(TPGD_NAME L"\\") + ui::MENU_RESET;
 	host->register_edit_menu(reset_name.c_str(), on_reset);
 	static const std::wstring return_name = std::wstring(TPGD_NAME L"\\") + ui::MENU_CHOOSE_RETURN;

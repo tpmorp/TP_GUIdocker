@@ -210,6 +210,138 @@
       "where": "照合できなかった浮いた窓を区画へ入れようとした時の知らせ",
       "value": "このパネルは識別できないため、区画に入れられません。\n一度閉じて「表示」メニューから開き直してください。",
       "status": "実装済み"
+    },
+    {
+      "id": "WS_DEFAULT_NAME",
+      "where": "最初のワークスペースの名前",
+      "value": "標準",
+      "status": "実装済み"
+    },
+    {
+      "id": "WS_NEW_NAME",
+      "where": "「＋」で作るワークスペースの名前の初期値 (%d は番号)",
+      "value": "ワークスペース%d",
+      "status": "実装済み"
+    },
+    {
+      "id": "WS_ADD",
+      "where": "ワークスペースの帯の追加ボタン",
+      "value": "＋",
+      "status": "実装済み"
+    },
+    {
+      "id": "WS_MENU_RENAME",
+      "where": "ワークスペースのボタンの右クリックメニュー",
+      "value": "名前を変更",
+      "status": "実装済み"
+    },
+    {
+      "id": "WS_MENU_SAVE",
+      "where": "同上",
+      "value": "今の配置で上書き保存",
+      "status": "実装済み"
+    },
+    {
+      "id": "WS_MENU_RESET",
+      "where": "同上",
+      "value": "保存時の配置に戻す",
+      "status": "実装済み"
+    },
+    {
+      "id": "WS_MENU_DELETE",
+      "where": "同上",
+      "value": "削除",
+      "status": "実装済み"
+    },
+    {
+      "id": "WS_DELETE_CONFIRM",
+      "where": "ワークスペースを削除する時の確認 (%s は名前)",
+      "value": "ワークスペース「%s」を削除しますか？",
+      "status": "実装済み"
+    },
+    {
+      "id": "WS_DELETE_LAST",
+      "where": "最後の1つを削除しようとした時の知らせ",
+      "value": "最後のワークスペースは削除できません。",
+      "status": "実装済み"
+    },
+    {
+      "id": "WS_NAME_TITLE",
+      "where": "名前を入力する画面の題名",
+      "value": "ワークスペースの名前",
+      "status": "実装済み"
+    },
+    {
+      "id": "WS_NAME_LABEL",
+      "where": "名前を入力する画面の説明",
+      "value": "名前:",
+      "status": "実装済み"
+    },
+    {
+      "id": "BUTTON_OK",
+      "where": "名前を入力する画面のボタン",
+      "value": "OK",
+      "status": "実装済み"
+    },
+    {
+      "id": "BUTTON_CANCEL",
+      "where": "名前を入力する画面のボタン",
+      "value": "キャンセル",
+      "status": "実装済み"
+    },
+    {
+      "id": "MENU_WS_SWITCH",
+      "where": "「TP_GUIdocker」→「ワークスペース」の項目 (ショートカットキー割り当て用。%d は番号)",
+      "value": "ワークスペース%dに切り替え",
+      "status": "実装済み"
+    },
+    {
+      "id": "MENU_WS_GROUP",
+      "where": "「TP_GUIdocker」メニュー内の階層名",
+      "value": "ワークスペース",
+      "status": "実装済み"
+    },
+    {
+      "id": "MENU_MAXIMIZE",
+      "where": "「TP_GUIdocker」メニューの項目 (ショートカットキー割り当て用。カーソルの下のパネルを最大化・元に戻す)",
+      "value": "パネルを最大化・元に戻す",
+      "status": "実装済み"
+    },
+    {
+      "id": "TAB_MAXIMIZE",
+      "where": "タブの右クリックメニュー (通常時)",
+      "value": "最大化",
+      "status": "実装済み"
+    },
+    {
+      "id": "TAB_RESTORE",
+      "where": "タブの右クリックメニュー (最大化中)",
+      "value": "元の大きさに戻す",
+      "status": "実装済み"
+    },
+    {
+      "id": "MENU_LOCK",
+      "where": "「TP_GUIdocker」メニューの切り替え項目 (ロックしていない時)",
+      "value": "レイアウトをロック",
+      "status": "実装済み"
+    },
+    {
+      "id": "MENU_UNLOCK",
+      "where": "同上 (ロック中)",
+      "value": "レイアウトのロックを解除",
+      "status": "実装済み"
+    },
+    {
+      "id": "LOCK_BADGE",
+      "where": "ロック中、ワークスペースの帯の右端に出る表示 (クリックで解除)",
+      "value": "ロック中",
+      "status": "実装済み"
+    },
+    {
+      "id": "UNLOCK_BADGE",
+      "where": "ロックしていない時、ワークスペースの帯の右端に出る表示 (クリックでロック)",
+      "value": "ロック",
+      "status": "実装済み"
     }
   ],
   "design": [
@@ -348,6 +480,30 @@
       "unit": "% (0=透明)",
       "status": "実装済み",
       "note": ""
+    },
+    {
+      "id": "WS_BAR_HEIGHT",
+      "item": "ワークスペースの帯の高さ",
+      "value": "本体設定 (GroupTabHeight, 既定24)",
+      "unit": "px (96dpi換算)",
+      "status": "実装済み",
+      "note": "タブ帯と同じ高さ"
+    },
+    {
+      "id": "WS_BUTTON_PADDING",
+      "item": "ワークスペースのボタンの文字の左右の余白",
+      "value": "12",
+      "unit": "px (96dpi換算)",
+      "status": "実装済み",
+      "note": ""
+    },
+    {
+      "id": "COLOR_WS_ACTIVE",
+      "item": "選択中のワークスペースのボタンの色",
+      "value": "本体設定 (ButtonBodySelect)",
+      "unit": "色",
+      "status": "実装済み",
+      "note": ""
     }
   ],
   "behavior": [
@@ -413,6 +569,42 @@
       "unit": "",
       "status": "実装済み",
       "note": "利用者の指定"
+    },
+    {
+      "id": "WS_MAX",
+      "item": "ショートカットキーで切り替えられるワークスペースの数",
+      "value": "9",
+      "choices": "1〜9",
+      "unit": "個",
+      "status": "実装済み",
+      "note": "ワークスペース自体はいくつでも作れる"
+    },
+    {
+      "id": "WS_KEEP_EDITS",
+      "item": "ワークスペースを切り替えた時の配置",
+      "value": "使用中の配置を保つ",
+      "choices": "使用中の配置を保つ / 保存時の配置に戻す",
+      "unit": "",
+      "status": "実装済み",
+      "note": "保存時の配置へは右クリック「保存時の配置に戻す」でいつでも戻せる"
+    },
+    {
+      "id": "LOCK_TARGETS",
+      "item": "ロック中に禁止する操作",
+      "value": "タブのドラッグ・右クリックの組み替え",
+      "choices": "",
+      "unit": "",
+      "status": "実装済み",
+      "note": "利用者の指定。境界線のドラッグと浮いた窓の取り込みは禁止しない"
+    },
+    {
+      "id": "MAXIMIZE_TARGET",
+      "item": "ショートカットキーで最大化するパネル",
+      "value": "カーソルの下のパネル",
+      "choices": "",
+      "unit": "",
+      "status": "実装済み",
+      "note": "カーソルが区画の外なら、最後に操作した区画"
     }
   ],
   "history": [

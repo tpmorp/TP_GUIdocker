@@ -81,6 +81,50 @@ constexpr const wchar_t* AREA_NAME_EMPTY = L"空き区画%d";
 constexpr const wchar_t* AREA_CLOSE = L"この区画を閉じる";
 // 照合できなかった浮いた窓を区画へ入れようとした時の知らせ [実装済み]
 constexpr const wchar_t* DOCK_UNKNOWN_PANEL = L"このパネルは識別できないため、区画に入れられません。\n一度閉じて「表示」メニューから開き直してください。";
+// 最初のワークスペースの名前 [実装済み]
+constexpr const wchar_t* WS_DEFAULT_NAME = L"標準";
+// 「＋」で作るワークスペースの名前の初期値 (%d は番号) [実装済み]
+constexpr const wchar_t* WS_NEW_NAME = L"ワークスペース%d";
+// ワークスペースの帯の追加ボタン [実装済み]
+constexpr const wchar_t* WS_ADD = L"＋";
+// ワークスペースのボタンの右クリックメニュー [実装済み]
+constexpr const wchar_t* WS_MENU_RENAME = L"名前を変更";
+// 同上 [実装済み]
+constexpr const wchar_t* WS_MENU_SAVE = L"今の配置で上書き保存";
+// 同上 [実装済み]
+constexpr const wchar_t* WS_MENU_RESET = L"保存時の配置に戻す";
+// 同上 [実装済み]
+constexpr const wchar_t* WS_MENU_DELETE = L"削除";
+// ワークスペースを削除する時の確認 (%s は名前) [実装済み]
+constexpr const wchar_t* WS_DELETE_CONFIRM = L"ワークスペース「%s」を削除しますか？";
+// 最後の1つを削除しようとした時の知らせ [実装済み]
+constexpr const wchar_t* WS_DELETE_LAST = L"最後のワークスペースは削除できません。";
+// 名前を入力する画面の題名 [実装済み]
+constexpr const wchar_t* WS_NAME_TITLE = L"ワークスペースの名前";
+// 名前を入力する画面の説明 [実装済み]
+constexpr const wchar_t* WS_NAME_LABEL = L"名前:";
+// 名前を入力する画面のボタン [実装済み]
+constexpr const wchar_t* BUTTON_OK = L"OK";
+// 名前を入力する画面のボタン [実装済み]
+constexpr const wchar_t* BUTTON_CANCEL = L"キャンセル";
+// 「TP_GUIdocker」→「ワークスペース」の項目 (ショートカットキー割り当て用。%d は番号) [実装済み]
+constexpr const wchar_t* MENU_WS_SWITCH = L"ワークスペース%dに切り替え";
+// 「TP_GUIdocker」メニュー内の階層名 [実装済み]
+constexpr const wchar_t* MENU_WS_GROUP = L"ワークスペース";
+// 「TP_GUIdocker」メニューの項目 (ショートカットキー割り当て用。カーソルの下のパネルを最大化・元に戻す) [実装済み]
+constexpr const wchar_t* MENU_MAXIMIZE = L"パネルを最大化・元に戻す";
+// タブの右クリックメニュー (通常時) [実装済み]
+constexpr const wchar_t* TAB_MAXIMIZE = L"最大化";
+// タブの右クリックメニュー (最大化中) [実装済み]
+constexpr const wchar_t* TAB_RESTORE = L"元の大きさに戻す";
+// 「TP_GUIdocker」メニューの切り替え項目 (ロックしていない時) [実装済み]
+constexpr const wchar_t* MENU_LOCK = L"レイアウトをロック";
+// 同上 (ロック中) [実装済み]
+constexpr const wchar_t* MENU_UNLOCK = L"レイアウトのロックを解除";
+// ロック中、ワークスペースの帯の右端に出る表示 (クリックで解除) [実装済み]
+constexpr const wchar_t* LOCK_BADGE = L"ロック中";
+// ロックしていない時、ワークスペースの帯の右端に出る表示 (クリックでロック) [実装済み]
+constexpr const wchar_t* UNLOCK_BADGE = L"ロック";
 
 //---------------------------------------------------------------------
 //	見た目 (数値で指定するもの。本体設定に連動する項目は host.cpp で読む)
@@ -112,6 +156,10 @@ constexpr int COMPASS_BUTTON = 48;
 constexpr int REGION_EDGE = 30;
 // ドラッグ中のタブの影の濃さ (% (0=透明)) [実装済み]
 constexpr int DRAG_GHOST_ALPHA = 60;
+// ワークスペースの帯の高さ: 本体設定 (GroupTabHeight, 既定24) (本体設定に連動)
+// ワークスペースのボタンの文字の左右の余白 (px (96dpi換算)) [実装済み]
+constexpr int WS_BUTTON_PADDING = 12;
+// 選択中のワークスペースのボタンの色: 本体設定 (ButtonBodySelect) (本体設定に連動)
 
 //---------------------------------------------------------------------
 //	動作
@@ -129,5 +177,10 @@ constexpr int DROP_OUTSIDE = 1;
 constexpr int EMPTY_AREA_CLOSE = 1;
 // ドラッグを取り消す操作: Esc キー [実装済み]
 // 有効中に「表示」から開いたパネル: 浮いた窓で画面中央に出す [実装済み]
+// ショートカットキーで切り替えられるワークスペースの数 (個) [実装済み]
+constexpr int WS_MAX = 9;
+// ワークスペースを切り替えた時の配置: 使用中の配置を保つ [実装済み]
+// ロック中に禁止する操作: タブのドラッグ・右クリックの組み替え [実装済み]
+// ショートカットキーで最大化するパネル: カーソルの下のパネル [実装済み]
 
 } // namespace tpgd::ui

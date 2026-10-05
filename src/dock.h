@@ -19,8 +19,17 @@ void dock_request_startup();
 // 有効化・無効化の切り替え (メニュー項目は1つで、状態に応じて ui::MENU_ENABLE / ui::MENU_DISABLE に書き換える)
 void dock_request_toggle();
 
-// 落とし先の見せ方 (十字ボタン式 / 区画の領域式) を切り替える
+// ドラッグ時の表示の方式 (十字ボタン式 / 区画の領域式) を切り替える
 void dock_request_toggle_drop_style();
+
+// ワークスペースを切り替える (index は 0 から)
+void dock_request_switch_workspace(int index);
+
+// カーソルの下のパネルを最大化・元に戻す
+void dock_request_maximize();
+
+// レイアウトのロックを切り替える
+void dock_request_toggle_lock();
 void dock_request_reset_tree();
 void dock_request_choose_return_layout();
 
