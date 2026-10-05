@@ -88,6 +88,9 @@ def generate_header(spec: dict) -> str:
         elif re.fullmatch(r"-?\d+", v):
             lines.append(f"// {d['item']} ({d['unit']}) [{d['status']}]")
             lines.append(f"constexpr int {d['id']} = {v};")
+        elif v == "メニューバーと同じ":
+            lines.append(f"// {d['item']}: メニューバーと同じ高さ (-1) [{d['status']}]")
+            lines.append(f"constexpr int {d['id']} = -1;")
         else:
             lines.append(f"// {d['item']}: {v} (本体設定に連動)")
     lines += ["", "//---------------------------------------------------------------------",

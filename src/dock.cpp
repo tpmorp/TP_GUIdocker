@@ -24,6 +24,18 @@
 #include <memory>
 #include <set>
 
+#include <commdlg.h>
+// GDI+ は min/max を必要とする (NOMINMAX のため std の版を見せる)
+namespace Gdiplus {
+using std::max;
+using std::min;
+}
+#include <objidl.h>
+#pragma warning(push)
+#pragma warning(disable : 4458)  // Windows SDK の GDI+ ヘッダー自身が出す警告
+#include <gdiplus.h>
+#pragma warning(pop)
+
 namespace tpgd {
 
 //---------------------------------------------------------------------
@@ -163,8 +175,33 @@ struct BusyGuard {
 //---------------------------------------------------------------------
 
 static int scaled(int v) { return (int)(v * g_scale + 0.5); }
-static int gap_size() { return style_size("WindowSeparatorSize", 7, g_scale); }
-static int tab_height() { return style_size("GroupTabHeight", 24, g_scale); }
+
+// 境界線の太さ: 本体設定 (WindowSeparatorSize) に、指示書の割合 (SEPARATOR %) を掛ける
+static int gap_size() {
+	int host = style_size("WindowSeparatorSize", 7, g_scale);
+	return std::max(1, (int)(host * ui::SEPARATOR / 100.0 + 0.5));
+}
+
+// 本体のメニューバー (「ファイル」「編集」の帯) の実際の高さ
+static int menu_bar_height() {
+	if (g_main) {
+		MENUBARINFO mbi = { sizeof(mbi) };
+		if (GetMenuBarInfo(g_main, OBJID_MENU, 0, &mbi)) {
+			int h = mbi.rcBar.bottom - mbi.rcBar.top;
+			if (h > 0) return h;
+		}
+	}
+	return GetSystemMetricsForDpi(SM_CYMENU, (UINT)(96 * g_scale + 0.5));
+}
+
+// 帯の高さ: 指示書の値 (-1: メニューバーと同じ / 0: 本体設定 / 正の数: 96dpi 換算の画素)
+static int bar_size(int spec) {
+	if (spec < 0) return menu_bar_height();
+	if (spec == 0) return style_size("GroupTabHeight", 24, g_scale);
+	return scaled(spec);
+}
+static int tab_height() { return bar_size(ui::TAB_HEIGHT); }
+static int ws_bar_height() { return bar_size(ui::WS_BAR_HEIGHT); }
 static int footer_height() { return style_size("FooterHeight", 24, g_scale); }
 
 static void update_font() {
@@ -227,6 +264,80 @@ static void notify(const std::wstring& msg, UINT icon = MB_ICONWARNING) {
 //	配置
 //---------------------------------------------------------------------
 
+// 選択中のワークスペースのボタンの色 (利用者が選んだ色、無ければ本体設定)
+static COLORREF ws_active_color() {
+	if (g_settings.ws_active_color >= 0) return (COLORREF)g_settings.ws_active_color;
+	return style_color("ButtonBodySelect", RGB(0x70, 0x70, 0xc0));
+}
+
+// 錠前の絵の説明 (カーソルを乗せると出る)
+static HWND g_tooltip = nullptr;
+static ULONG_PTR g_gdiplus_token = 0;
+static void update_lock_tooltip() {
+	if (!g_tooltip) return;
+	TOOLINFOW ti = { sizeof(ti) };
+	ti.hwnd = g_container;
+	ti.uId = 1;
+	ti.rect = g_lock_rect;
+	ti.lpszText = (LPWSTR)(g_settings.locked ? ui::LOCK_BADGE : ui::UNLOCK_BADGE);
+	SendMessageW(g_tooltip, TTM_NEWTOOLRECTW, 0, (LPARAM)&ti);
+	SendMessageW(g_tooltip, TTM_UPDATETIPTEXTW, 0, (LPARAM)&ti);
+}
+
+static void create_lock_tooltip() {
+	g_tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP,
+		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, g_container, nullptr, GetModuleHandleW(nullptr), nullptr);
+	if (!g_tooltip) return;
+	TOOLINFOW ti = { sizeof(ti) };
+	ti.uFlags = TTF_SUBCLASS;
+	ti.hwnd = g_container;
+	ti.uId = 1;
+	ti.lpszText = (LPWSTR)ui::UNLOCK_BADGE;
+	SendMessageW(g_tooltip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
+}
+
+// 錠前の絵を描く (locked: 閉じた錠前 / 開いた錠前)
+static void draw_lock_icon(HDC dc, const RECT& r, bool locked, COLORREF color) {
+	Gdiplus::Graphics g(dc);
+	g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+	float h = (float)(r.bottom - r.top);
+	float s = h * 0.66f;                                   // 絵の大きさ
+	float cx = (r.left + r.right) / 2.0f, top = r.top + (h - s) / 2.0f;
+	Gdiplus::Color col(255, GetRValue(color), GetGValue(color), GetBValue(color));
+
+	// 本体 (角の丸い四角)
+	float bw = s * 0.74f, bh = s * 0.52f, bx = cx - bw / 2, by = top + s - bh;
+	float rad = s * 0.1f;
+	Gdiplus::GraphicsPath body;
+	body.AddArc(bx, by, rad * 2, rad * 2, 180, 90);
+	body.AddArc(bx + bw - rad * 2, by, rad * 2, rad * 2, 270, 90);
+	body.AddArc(bx + bw - rad * 2, by + bh - rad * 2, rad * 2, rad * 2, 0, 90);
+	body.AddArc(bx, by + bh - rad * 2, rad * 2, rad * 2, 90, 90);
+	body.CloseFigure();
+	Gdiplus::SolidBrush brush(col);
+	g.FillPath(&brush, &body);
+
+	// つる (U 字の輪)。開いた錠前は右へずらし、片側の脚を本体から外す
+	float pen_w = s * 0.11f;
+	Gdiplus::Pen pen(col, pen_w);
+	pen.SetStartCap(Gdiplus::LineCapRound);
+	pen.SetEndCap(Gdiplus::LineCapRound);
+	float sw = bw * 0.62f, sh = s * 0.58f;
+	float sx = cx - sw / 2 + (locked ? 0 : bw * 0.32f);
+	float sy = top + (locked ? 0 : -s * 0.06f);
+	float leg_bottom = by + pen_w * 0.5f;
+	Gdiplus::GraphicsPath shackle;
+	shackle.AddLine(sx, leg_bottom, sx, sy + sw / 2);
+	shackle.AddArc(sx, sy, sw, sw, 180, 180);
+	shackle.AddLine(sx + sw, sy + sw / 2, sx + sw, locked ? leg_bottom : sy + sh * 0.62f);
+	g.DrawPath(&pen, &shackle);
+
+	// 鍵穴
+	Gdiplus::SolidBrush hole(Gdiplus::Color(255, 40, 40, 40));
+	float kr = s * 0.07f;
+	g.FillEllipse(&hole, cx - kr, by + bh * 0.42f - kr, kr * 2, kr * 2);
+}
+
 static void position_container() {
 	if (!g_container || !g_main) return;
 	RECT rc;
@@ -241,7 +352,7 @@ static void relayout() {
 	GetClientRect(g_container, &rc);
 
 	// 上端にワークスペースの帯、その下に区画
-	g_bar = { rc.left, rc.top, rc.right, rc.top + tab_height() };
+	g_bar = { rc.left, rc.top, rc.right, rc.top + ws_bar_height() };
 	RECT area = { rc.left, g_bar.bottom + gap_size(), rc.right, rc.bottom };
 	if (area.bottom < area.top) area.bottom = area.top;
 	compute_layout(g_root.get(), area, gap_size(), tab_height());
@@ -281,8 +392,10 @@ static void relayout() {
 		}
 		int add_w = measure(ui::WS_ADD);
 		g_ws_add = { x, g_bar.top, x + add_w, g_bar.bottom };
-		int lock_w = measure(g_settings.locked ? ui::LOCK_BADGE : ui::UNLOCK_BADGE);
+		// 錠前の絵のボタン (帯の高さに合わせた横長の枠)
+		int lock_w = (g_bar.bottom - g_bar.top) * 8 / 5;
 		g_lock_rect = { g_bar.right - lock_w, g_bar.top, g_bar.right, g_bar.bottom };
+		update_lock_tooltip();
 	}
 
 	// 各葉の表示中タブを決め、タブの当たり判定を作る
@@ -521,25 +634,19 @@ static int drop_style() {
 	return g_settings.drop_style >= 0 ? g_settings.drop_style : ui::DROP_STYLE;
 }
 
-// 十字ボタン式: 葉の本体の中央に5つのボタンを置く (画面座標)
-static std::vector<CompassButton> compass_buttons(const Node* leaf) {
-	std::vector<CompassButton> out;
+// 十字ボタン式: 葉の本体の中央にドーナツ型のボタンを置く (画面座標)
+static CompassDonut compass_of(const Node* leaf) {
 	RECT b = leaf->body;
 	MapWindowPoints(g_container, nullptr, (POINT*)&b, 2);
-	int size = scaled(ui::COMPASS_BUTTON);
-	int gap = std::max(2, size / 8);
-	int cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
-	auto at = [&](int dx, int dy, DropZone z) {
-		int x = cx - size / 2 + dx * (size + gap);
-		int y = cy - size / 2 + dy * (size + gap);
-		out.push_back({ { x, y, x + size, y + size }, (int)z, false });
-	};
-	at(0, 0, DropZone::Center);
-	at(-1, 0, DropZone::Left);
-	at(1, 0, DropZone::Right);
-	at(0, -1, DropZone::Top);
-	at(0, 1, DropZone::Bottom);
-	return out;
+	CompassDonut c;
+	c.center = { (b.left + b.right) / 2, (b.top + b.bottom) / 2 };
+	c.radius = scaled(ui::COMPASS_BUTTON) / 2;
+	c.hole = c.radius * ui::COMPASS_HOLE / 100;
+	return c;
+}
+
+static RECT compass_rect(const CompassDonut& c) {
+	return { c.center.x - c.radius, c.center.y - c.radius, c.center.x + c.radius, c.center.y + c.radius };
 }
 
 // 区画の領域式: 葉の中の位置から上下左右・中央を決める
@@ -583,13 +690,10 @@ static void update_drop_target(POINT pt) {
 			t.zone = DropZone::Center;
 			t.tab_index = tab_insert_index(t.leaf, client);
 		} else if (drop_style() == 0) {
-			v.buttons = compass_buttons(t.leaf);
-			for (auto& b : v.buttons) {
-				if (PtInRect(&b.rect, pt)) {
-					b.hot = true;
-					t.zone = (DropZone)b.zone;
-				}
-			}
+			v.has_compass = true;
+			v.compass = compass_of(t.leaf);
+			v.hot_zone = compass_zone_at(v.compass, pt);
+			t.zone = (DropZone)v.hot_zone;
 		} else {
 			t.zone = region_zone(t.leaf, client);
 		}
@@ -1048,6 +1152,7 @@ static bool build_and_capture(bool interactive) {
 	relayout();
 	save_tree();
 	SetTimer(g_container, TIMER_WATCH, 300, nullptr);
+	log(L"帯の高さ=" + std::to_wstring(tab_height()) + L" (メニューバー=" + std::to_wstring(menu_bar_height()) + L") 境界線=" + std::to_wstring(gap_size()));
 	log(L"有効化した (取り込み " + std::to_wstring(g_panels.size()) + L" 枚, 浮いた窓 " + std::to_wstring(g_floats.size()) + L" 枚)");
 	return true;
 }
@@ -1252,12 +1357,15 @@ static void delete_workspace(int index) {
 }
 
 static void show_workspace_menu(int index, POINT screen) {
-	enum { ID_RENAME = 1, ID_SAVE, ID_RESET, ID_DELETE };
+	enum { ID_RENAME = 1, ID_SAVE, ID_RESET, ID_DELETE, ID_COLOR, ID_COLOR_RESET };
 	bool active = (index == g_settings.active_ws);
 	HMENU menu = CreatePopupMenu();
 	AppendMenuW(menu, MF_STRING, ID_RENAME, ui::WS_MENU_RENAME);
 	AppendMenuW(menu, MF_STRING | (active ? 0 : MF_GRAYED), ID_SAVE, ui::WS_MENU_SAVE);
 	AppendMenuW(menu, MF_STRING, ID_RESET, ui::WS_MENU_RESET);
+	AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+	AppendMenuW(menu, MF_STRING, ID_COLOR, ui::WS_MENU_COLOR);
+	AppendMenuW(menu, MF_STRING | (g_settings.ws_active_color >= 0 ? 0 : MF_GRAYED), ID_COLOR_RESET, ui::WS_MENU_COLOR_RESET);
 	AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 	AppendMenuW(menu, MF_STRING, ID_DELETE, ui::WS_MENU_DELETE);
 	UINT cmd = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, screen.x, screen.y, 0, g_container, nullptr);
@@ -1267,6 +1375,26 @@ static void show_workspace_menu(int index, POINT screen) {
 		case ID_SAVE: save_workspace(index); break;
 		case ID_RESET: switch_workspace(index, true); break;
 		case ID_DELETE: delete_workspace(index); break;
+		case ID_COLOR: {
+			// Windows の色選択画面で選ぶ
+			static COLORREF custom[16] = {};
+			CHOOSECOLORW cc = { sizeof(cc) };
+			cc.hwndOwner = g_main;
+			cc.rgbResult = ws_active_color();
+			cc.lpCustColors = custom;
+			cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+			if (ChooseColorW(&cc)) {
+				g_settings.ws_active_color = (int)cc.rgbResult;
+				g_settings.save();
+				InvalidateRect(g_container, nullptr, TRUE);
+			}
+			break;
+		}
+		case ID_COLOR_RESET:
+			g_settings.ws_active_color = -1;
+			g_settings.save();
+			InvalidateRect(g_container, nullptr, TRUE);
+			break;
 	}
 }
 
@@ -1492,9 +1620,9 @@ static void export_samples() {
 		// 区画の中の位置を選んで、落とし先の表示を作る
 		POINT pt;
 		if (style == 0) {
-			auto buttons = compass_buttons(leaf);
-			const RECT& b = buttons[1].rect;  // 左のボタン
-			pt = { (b.left + b.right) / 2, (b.top + b.bottom) / 2 };
+			// 左の扇の中ほど
+			CompassDonut c = compass_of(leaf);
+			pt = { c.center.x - (c.radius + c.hole) / 2, c.center.y };
 		} else {
 			RECT r = leaf->rect;
 			MapWindowPoints(g_container, nullptr, (POINT*)&r, 2);
@@ -1506,9 +1634,8 @@ static void export_samples() {
 		RECT preview = drop_preview_rect(leaf, style == 0 ? DropZone::Left : DropZone::Right, gap_size());
 		s.notes.push_back({ { L"DROP_HIGHLIGHT", L"DROP_ALPHA" }, to_capture(preview, origin), L"置かれる範囲の予告" });
 		if (style == 0) {
-			RECT all = {};
-			for (auto& b : compass_buttons(leaf)) UnionRect(&all, &all, &b.rect);
-			s.notes.push_back({ { L"COMPASS_BUTTON" }, screen_to_capture(all, origin), L"十字ボタン (中央: タブとして重ねる / 上下左右: その側に分割)" });
+			s.notes.push_back({ { L"COMPASS_BUTTON", L"COMPASS_HOLE" }, screen_to_capture(compass_rect(compass_of(leaf)), origin),
+				L"ドーナツ型のボタン (中心の円: タブとして重ねる / 周りの扇: その側に分割)" });
 		} else {
 			s.notes.push_back({ { L"REGION_EDGE" }, to_capture(leaf->rect, origin), L"区画の端から REGION_EDGE % 以内なら上下左右、それより内側ならタブとして重ねる" });
 		}
@@ -1794,7 +1921,7 @@ static void paint(HWND hwnd) {
 	} else if (g_root) {
 		// ワークスペースの帯
 		fill(g_bar, c_tabbar);
-		COLORREF c_ws_sel = style_color("ButtonBodySelect", RGB(0x70, 0x70, 0xc0));
+		COLORREF c_ws_sel = ws_active_color();
 		for (auto& w : g_ws_hits) {
 			bool sel = (w.index == g_settings.active_ws);
 			if (sel) fill(w.rect, c_ws_sel);
@@ -1807,9 +1934,7 @@ static void paint(HWND hwnd) {
 			RECT r = g_ws_add;
 			DrawTextW(dc, ui::WS_ADD, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 			if (g_settings.locked) fill(g_lock_rect, c_ws_sel);
-			SetTextColor(dc, g_settings.locked ? c_text : c_text_dis);
-			r = g_lock_rect;
-			DrawTextW(dc, g_settings.locked ? ui::LOCK_BADGE : ui::UNLOCK_BADGE, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+			draw_lock_icon(dc, g_lock_rect, g_settings.locked, g_settings.locked ? c_text : c_text_dis);
 		}
 
 		for_each_leaf(g_root.get(), [&](Node* leaf) {
@@ -2119,6 +2244,13 @@ bool dock_init() {
 	}
 	g_scale = dpi_scale(nullptr);
 	update_font();
+
+	// 錠前の絵 (GDI+) と、その説明 (ツールチップ) の準備
+	Gdiplus::GdiplusStartupInput gsi;
+	Gdiplus::GdiplusStartup(&g_gdiplus_token, &gsi, nullptr);
+	INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_WIN95_CLASSES };
+	InitCommonControlsEx(&icc);
+	create_lock_tooltip();
 	return true;
 }
 
@@ -2152,6 +2284,10 @@ void dock_shutdown() {
 	g_container = nullptr;
 	if (g_font) DeleteObject(g_font);
 	g_font = nullptr;
+	if (g_tooltip) DestroyWindow(g_tooltip);
+	g_tooltip = nullptr;
+	if (g_gdiplus_token) Gdiplus::GdiplusShutdown(g_gdiplus_token);
+	g_gdiplus_token = 0;
 }
 
 } // namespace tpgd

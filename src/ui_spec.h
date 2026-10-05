@@ -121,23 +121,29 @@ constexpr const wchar_t* TAB_RESTORE = L"元の大きさに戻す";
 constexpr const wchar_t* MENU_LOCK = L"レイアウトをロック";
 // 同上 (ロック中) [実装済み]
 constexpr const wchar_t* MENU_UNLOCK = L"レイアウトのロックを解除";
-// ロック中、ワークスペースの帯の右端に出る表示 (クリックで解除) [実装済み]
-constexpr const wchar_t* LOCK_BADGE = L"ロック中";
-// ロックしていない時、ワークスペースの帯の右端に出る表示 (クリックでロック) [実装済み]
-constexpr const wchar_t* UNLOCK_BADGE = L"ロック";
+// ロック中、帯の右端の閉じた錠前の絵にカーソルを乗せると出る説明 (クリックで解除) [実装済み]
+constexpr const wchar_t* LOCK_BADGE = L"ロック中 (クリックで解除)";
+// ロックしていない時、帯の右端の開いた錠前の絵にカーソルを乗せると出る説明 (クリックでロック) [実装済み]
+constexpr const wchar_t* UNLOCK_BADGE = L"クリックでレイアウトをロック";
 // 「TP_GUIdocker」メニューの項目 (見本の画像を書き出す。指示用) [実装済み]
 constexpr const wchar_t* MENU_EXPORT_SAMPLES = L"見本を書き出す";
 // 見本を書き出した時の知らせ (%s は書き出し先) [実装済み]
 constexpr const wchar_t* EXPORT_DONE = L"見本を書き出しました。\n\n書き出し先: %s";
 // 無効中に見本を書き出そうとした時の知らせ [実装済み]
 constexpr const wchar_t* EXPORT_NEED_ACTIVE = L"見本は TP_GUIdockerの有効中に書き出せます。";
+// ワークスペースのボタンの右クリックメニュー [実装済み]
+constexpr const wchar_t* WS_MENU_COLOR = L"選択中の色を変える…";
+// 同上 [実装済み]
+constexpr const wchar_t* WS_MENU_COLOR_RESET = L"選択中の色を本体設定に戻す";
 
 //---------------------------------------------------------------------
 //	見た目 (数値で指定するもの。本体設定に連動する項目は host.cpp で読む)
 //---------------------------------------------------------------------
 
-// タブ帯の高さ: 本体設定 (GroupTabHeight, 既定24) (本体設定に連動)
-// 区画の間 (境界線) の太さ: 本体設定 (WindowSeparatorSize, 既定7) (本体設定に連動)
+// タブ帯の高さ: メニューバーと同じ高さ (-1) [実装済み]
+constexpr int TAB_HEIGHT = -1;
+// 区画の間 (境界線) の太さ (% (本体設定 WindowSeparatorSize に対する割合)) [実装済み]
+constexpr int SEPARATOR = 50;
 // タブの文字の左右の余白 (px (96dpi換算)) [実装済み]
 constexpr int TAB_PADDING = 10;
 // 区画の最小の大きさ (px (96dpi換算)) [実装済み]
@@ -156,16 +162,19 @@ constexpr int FLOAT_H = 420;
 constexpr COLORREF DROP_HIGHLIGHT = 0xFF8C5A;
 // 配置ガイドの予告表示の濃さ (% (0=透明)) [実装済み]
 constexpr int DROP_ALPHA = 35;
-// 十字ボタン式のボタン1つの大きさ (px (96dpi換算)) [実装済み]
-constexpr int COMPASS_BUTTON = 48;
+// ドーナツ型のボタンの直径 (px (96dpi換算)) [実装済み]
+constexpr int COMPASS_BUTTON = 150;
 // 区画の領域式で、上下左右と判定する幅 (% (区画の幅・高さに対する割合)) [実装済み]
 constexpr int REGION_EDGE = 30;
 // ドラッグ中のタブの影の濃さ (% (0=透明)) [実装済み]
 constexpr int DRAG_GHOST_ALPHA = 60;
-// ワークスペースの帯の高さ: 本体設定 (GroupTabHeight, 既定24) (本体設定に連動)
+// ワークスペースの帯の高さ: メニューバーと同じ高さ (-1) [実装済み]
+constexpr int WS_BAR_HEIGHT = -1;
 // ワークスペースのボタンの文字の左右の余白 (px (96dpi換算)) [実装済み]
 constexpr int WS_BUTTON_PADDING = 12;
-// 選択中のワークスペースのボタンの色: 本体設定 (ButtonBodySelect) (本体設定に連動)
+// 選択中のワークスペースのボタンの色: 本体設定 (ButtonBodySelect)。右クリックで自由に変更可 (本体設定に連動)
+// ドーナツ型の中心の円の大きさ (% (直径に対する割合)) [実装済み]
+constexpr int COMPASS_HOLE = 40;
 
 //---------------------------------------------------------------------
 //	動作

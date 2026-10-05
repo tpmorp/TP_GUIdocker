@@ -343,11 +343,11 @@ def workspace_page(spec):
         d.line((bx + lw / 2, y + 44, bx + lw / 2, ly + 8), fill=ID_COLOR, width=1)
         d.text((bx + lw / 2 + 6, ly), item_id, fill=ID_COLOR, font=font(15))
         bx += lw
-    lock = t("UNLOCK_BADGE")
+    lock = "(錠前の絵)"
     lw = d.textlength(lock, font=font(20)) + 32
     lx = PAGE_W - MARGIN - lw
     d.text((lx + 16, y + 9), lock, fill=(150, 150, 150), font=font(20))
-    lock_label = "UNLOCK_BADGE (ロック中は LOCK_BADGE: " + t("LOCK_BADGE") + ")"
+    lock_label = "錠前の絵 / 説明: UNLOCK_BADGE (" + t("UNLOCK_BADGE") + ")・LOCK_BADGE (" + t("LOCK_BADGE") + ")"
     tw = d.textlength(lock_label, font=font(15))
     d.line((lx + lw / 2, y + 44, lx + lw / 2, y + 68), fill=ID_COLOR, width=1)
     d.text((PAGE_W - MARGIN - tw, y + 60), lock_label, fill=ID_COLOR, font=font(15))

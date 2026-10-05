@@ -5,6 +5,7 @@
 #include "common.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace tpgd {
@@ -104,28 +105,99 @@ RECT offset(RECT r, int dx, int dy) {
 	return r;
 }
 
-// 十字ボタンの絵: 枠の中に小さな区画を描き、置かれる側を塗る
-void draw_button(Canvas& cv, RECT r, int zone, bool hot, COLORREF highlight, COLORREF face, COLORREF edge) {
-	int w = r.right - r.left, h = r.bottom - r.top;
-	cv.fill(r, face, hot ? 245 : 215);
-	cv.frame(r, hot ? highlight : edge, 255, std::max(1, w / 24));
-	int inset = std::max(3, w / 5);
-	RECT box = { r.left + inset, r.top + inset, r.right - inset, r.bottom - inset };
-	cv.frame(box, edge, 255, std::max(1, w / 32));
-	RECT part = box;
-	int bw = box.right - box.left, bh = box.bottom - box.top;
-	switch (zone) {
-		case 2: part.right = box.left + bw / 2; break;   // Left
-		case 3: part.left = box.right - bw / 2; break;   // Right
-		case 4: part.bottom = box.top + bh / 2; break;   // Top
-		case 5: part.top = box.bottom - bh / 2; break;   // Bottom
-		default: InflateRect(&part, -std::max(1, bw / 8), -std::max(1, bh / 8)); break;  // Center
+// DropZone の値 (tree.h と同じ並び)
+enum { Z_NONE = 0, Z_CENTER = 1, Z_LEFT = 2, Z_RIGHT = 3, Z_TOP = 4, Z_BOTTOM = 5 };
+
+// 中心からの位置 (dx, dy) がどの部分か。gap: 部分の間の隙間の幅
+int donut_zone(double dx, double dy, double radius, double hole, double gap) {
+	double d = std::sqrt(dx * dx + dy * dy);
+	if (d <= hole) return Z_CENTER;
+	if (d > radius) return Z_NONE;
+	if (gap > 0) {
+		if (d < hole + gap) return Z_NONE;                                     // 円と扇の間の隙間
+		if (std::abs(std::abs(dx) - std::abs(dy)) / 1.41421356 < gap / 2) return Z_NONE;  // 扇どうしの隙間
 	}
-	cv.fill(part, highlight, 255);
-	(void)h;
+	if (std::abs(dx) >= std::abs(dy)) return dx < 0 ? Z_LEFT : Z_RIGHT;
+	return dy < 0 ? Z_TOP : Z_BOTTOM;
+}
+
+// 点が三角形の中か
+bool in_triangle(double px, double py, const double* t) {
+	auto side = [](double ax, double ay, double bx, double by, double x, double y) {
+		return (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+	};
+	double s1 = side(t[0], t[1], t[2], t[3], px, py);
+	double s2 = side(t[2], t[3], t[4], t[5], px, py);
+	double s3 = side(t[4], t[5], t[0], t[1], px, py);
+	bool neg = s1 < 0 || s2 < 0 || s3 < 0, pos = s1 > 0 || s2 > 0 || s3 > 0;
+	return !(neg && pos);
+}
+
+// ドーナツ型のボタンを描く (縁を滑らかにするため、1画素を 4x4 の点で調べて混ぜる)
+void draw_donut(Canvas& cv, POINT c, int radius, int hole, int hot, COLORREF highlight, COLORREF face, COLORREF ink) {
+	const double R = radius, H = hole, gap = std::max(2.0, radius / 30.0);
+	// 扇ごとの矢印 (外向きの三角形)。中心からの距離 mid の位置に置く
+	double mid = (H + R) / 2, a = (R - H) * 0.22;
+	double arrows[4][6] = {
+		{ -mid - a, 0, -mid + a * 0.6, -a, -mid + a * 0.6, a },   // 左
+		{ mid + a, 0, mid - a * 0.6, -a, mid - a * 0.6, a },      // 右
+		{ 0, -mid - a, -a, -mid + a * 0.6, a, -mid + a * 0.6 },   // 上
+		{ 0, mid + a, -a, mid - a * 0.6, a, mid - a * 0.6 },      // 下
+	};
+	// 中心の円の印 (タブとして重ねる): 小さな四角2つを重ねた形
+	double s = H * 0.42;
+	RECT icon_back = { (LONG)(-s * 0.7), (LONG)(-s * 0.9), (LONG)(s * 0.9), (LONG)(s * 0.5) };
+	RECT icon_front = { (LONG)(-s * 0.9), (LONG)(-s * 0.5), (LONG)(s * 0.7), (LONG)(s * 0.9) };
+
+	const int N = 4;
+	for (int py = c.y - radius - 1; py <= c.y + radius + 1; py++) {
+		if (py < 0 || py >= cv.h) continue;
+		for (int px = c.x - radius - 1; px <= c.x + radius + 1; px++) {
+			if (px < 0 || px >= cv.w) continue;
+			double sa = 0, sr = 0, sg = 0, sb = 0;
+			for (int sy = 0; sy < N; sy++) {
+				for (int sx = 0; sx < N; sx++) {
+					double dx = px + (sx + 0.5) / N - c.x - 0.5, dy = py + (sy + 0.5) / N - c.y - 0.5;
+					int z = donut_zone(dx, dy, R, H, gap);
+					if (z == Z_NONE) continue;
+					COLORREF col = (z == hot) ? highlight : face;
+					double alpha = (z == hot) ? 0.95 : 0.88;
+					// 印 (矢印・四角) は文字色で描く
+					bool mark = false;
+					if (z == Z_CENTER) {
+						POINT q = { (LONG)std::floor(dx), (LONG)std::floor(dy) };
+						bool in_front = PtInRect(&icon_front, q) != FALSE;
+						bool in_back = PtInRect(&icon_back, q) != FALSE;
+						RECT inner = icon_front;
+						InflateRect(&inner, -std::max<LONG>(1, (LONG)(s / 6)), -std::max<LONG>(1, (LONG)(s / 6)));
+						mark = (in_front && !PtInRect(&inner, q)) || (in_back && !in_front && q.y < icon_front.top);
+					} else {
+						mark = in_triangle(dx, dy, arrows[z - Z_LEFT]);
+					}
+					if (mark) { col = ink; alpha = 1.0; }
+					sa += alpha;
+					sr += GetRValue(col) * alpha;
+					sg += GetGValue(col) * alpha;
+					sb += GetBValue(col) * alpha;
+				}
+			}
+			if (sa <= 0) continue;
+			double n = N * N;
+			uint32_t A = (uint32_t)std::min(255.0, sa / n * 255), Rr = (uint32_t)std::min(255.0, sr / n), G = (uint32_t)std::min(255.0, sg / n), B = (uint32_t)std::min(255.0, sb / n);
+			// 下の予告表示の上に重ねる (事前乗算アルファの合成)
+			uint32_t& dst = cv.px[(size_t)py * cv.w + px];
+			uint32_t inv = 255 - A;
+			uint32_t da = dst >> 24, dr = (dst >> 16) & 0xFF, dg = (dst >> 8) & 0xFF, db = dst & 0xFF;
+			dst = ((A + da * inv / 255) << 24) | ((Rr + dr * inv / 255) << 16) | ((G + dg * inv / 255) << 8) | (B + db * inv / 255);
+		}
+	}
 }
 
 } // namespace
+
+int compass_zone_at(const CompassDonut& c, POINT pt) {
+	return donut_zone(pt.x - c.center.x, pt.y - c.center.y, c.radius, c.hole, 0);
+}
 
 //---------------------------------------------------------------------
 //	落とし先の重ね窓
@@ -149,8 +221,9 @@ void DropOverlay::update(const DropVisual& v, COLORREF highlight, int alpha_perc
 		cv.fill(p, highlight, a);
 		cv.frame(p, highlight, std::min(255, a + 120), 2);
 	}
-	for (auto& b : v.buttons) {
-		draw_button(cv, offset(b.rect, -area_.left, -area_.top), b.zone, b.hot, highlight, face, edge);
+	if (v.has_compass) {
+		POINT c = { v.compass.center.x - area_.left, v.compass.center.y - area_.top };
+		draw_donut(cv, c, v.compass.radius, v.compass.hole, v.hot_zone, highlight, face, edge);
 	}
 	cv.present(hwnd_, { area_.left, area_.top });
 }
