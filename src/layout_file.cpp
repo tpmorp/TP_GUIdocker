@@ -107,6 +107,23 @@ bool IniDoc::save(const std::wstring& path) const {
 	return MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
 }
 
+IniDoc extract_layout(const IniDoc& ini) {
+	// 本体が保存するレイアウトファイルの項目と順序
+	static const char* KEYS[] = { "left", "group", "area", "top", "hide", "right", "bottom", "floating", "x", "y", "w", "h", "zoom" };
+	IniDoc out;
+	for (auto& s : ini.sections) {
+		if (s.name.rfind("Window.", 0) != 0) continue;
+		// 配置情報を持たないセクションは対象外
+		if (!s.has("area")) continue;
+		IniSection d{ s.name, {} };
+		for (auto key : KEYS) {
+			if (s.has(key)) d.lines.push_back(std::string(key) + "=" + s.get(key));
+		}
+		out.sections.push_back(std::move(d));
+	}
+	return out;
+}
+
 IniSection* IniDoc::find(const std::string& name) {
 	for (auto& s : sections) if (s.name == name) return &s;
 	return nullptr;

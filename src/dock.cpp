@@ -151,24 +151,62 @@ void dock_prepare_layouts() {
 	std::wstring return_path = dir + L"\\" + AUTO_RETURN_LAYOUT + L".layout";
 	std::wstring dock_path = dir + L"\\" + DOCK_LAYOUT + L".layout";
 
+	// aviutl2.ini には削除済みプラグインの古いセクションも残るため、
+	// 本体自身が保存したレイアウトファイル (利用者が作成したもの) に載っているセクションに絞る
+	// ※ 本体のレイアウトファイルが1つも無い場合は絞り込まない
+	std::vector<std::string> known;
+	for (auto& name : list_layouts()) {
+		if (name == DOCK_LAYOUT || name == AUTO_RETURN_LAYOUT) continue;
+		IniDoc d;
+		if (!d.load(dir + L"\\" + name + L".layout")) continue;
+		for (auto& s : d.sections) {
+			if (std::find(known.begin(), known.end(), s.name) == known.end()) known.push_back(s.name);
+		}
+	}
+	auto drop_unknown = [&](IniDoc& doc) {
+		if (known.empty()) return;
+		auto& secs = doc.sections;
+		for (auto it = secs.begin(); it != secs.end();) {
+			if (std::find(known.begin(), known.end(), it->name) == known.end()) {
+				log(L"古いセクションを除外: " + utf8_to_wide(it->name));
+				it = secs.erase(it);
+			} else {
+				++it;
+			}
+		}
+	};
+
 	// 本体の現在の配置 (前回終了時に本体が保存したもの) を読む ※読むだけで書き込まない
 	IniDoc ini;
 	IniDoc snapshot;
-	if (ini.load(app_data_dir() + L"\\aviutl2.ini")) {
-		for (auto& s : ini.sections) {
-			if (starts_with(s.name, "Window.")) snapshot.sections.push_back(s);
-		}
+	if (ini.load(app_data_dir() + L"\\aviutl2.ini")) snapshot = extract_layout(ini);
+	drop_unknown(snapshot);
+
+	// 表示中のパネルが全て切り離されている配置は、自由分割の名残であり通常の配置ではない
+	int visible = 0, floating = 0;
+	for (auto& s : snapshot.sections) {
+		if (s.get("hide") != "0") continue;
+		visible++;
+		if (s.get("floating") == "1") floating++;
+	}
+	bool snapshot_is_normal = visible > 0 && floating < visible;
+	if (!snapshot_is_normal) {
+		log(L"本体の配置が通常の状態ではない (表示 " + std::to_wstring(visible) + L" 枚中 " + std::to_wstring(floating) + L" 枚が切り離し)");
 	}
 
-	// 戻り先の自動保存: 前回が正常終了 (自由分割を正しく解除できた) の場合のみ更新する
+	// 戻り先の自動保存: 前回が正常終了 (自由分割を正しく解除できた) で、通常の配置である場合のみ更新する
 	// 異常終了時の本体配置はパネルが切り離されたままの可能性があるため、上書きしない
 	IniDoc template_doc;
-	if (!g_settings.session_active && !snapshot.sections.empty()) {
+	if (!g_settings.session_active && snapshot_is_normal) {
 		if (snapshot.save(return_path)) log(L"戻り先レイアウトを保存: " + return_path);
 		else log(L"戻り先レイアウトを保存できない: " + return_path);
 		template_doc = snapshot;
 	} else if (template_doc.load(return_path)) {
-		log(L"前回が異常終了のため、戻り先レイアウトは更新しない");
+		template_doc = extract_layout(template_doc);
+		drop_unknown(template_doc);
+		// 過去の版が書いた不要な項目・セクションを除いて保存し直す
+		template_doc.save(return_path);
+		log(L"戻り先レイアウトは更新せず、前回保存したものを使う");
 	} else {
 		template_doc = snapshot;
 	}
@@ -550,6 +588,15 @@ static bool enter_dock(bool interactive) {
 		if (interactive) MessageBoxW(g_main, L"パネルを取り込めませんでした。標準の画面に戻します。", TPGD_NAME, MB_OK | MB_ICONWARNING);
 		return false;
 	}
+	// 照合できなかったパネルの仮の識別名 (title:...) のうち、今回いないものは分割木から除く
+	for_each_leaf(g_root.get(), [](Node* leaf) {
+		auto& v = leaf->panels;
+		v.erase(std::remove_if(v.begin(), v.end(), [](const std::wstring& k) {
+			if (k.rfind(L"title:", 0) != 0) return false;
+			for (auto& p : g_panels) if (p.key == k) return false;
+			return true;
+		}), v.end());
+	});
 	relayout();
 	save_tree();
 	SetTimer(g_container, TIMER_WATCH, 300, nullptr);

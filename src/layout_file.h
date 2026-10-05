@@ -27,4 +27,9 @@ struct IniDoc {
 	const IniSection* find(const std::string& name) const;
 };
 
+// 本体の設定ファイル (aviutl2.ini) からレイアウトファイルの内容を取り出す
+// [Window.*] セクションのうち、レイアウトファイルが持つ項目 (位置・大きさ・表示状態) のみを
+// 本体のレイアウトファイルと同じ順序で写す ※それ以外の項目が入ると本体が読み込みに失敗する
+IniDoc extract_layout(const IniDoc& ini);
+
 } // namespace tpgd

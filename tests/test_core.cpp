@@ -79,6 +79,36 @@ int wmain(int argc, wchar_t** argv) {
 		DeleteFileW(tmp.c_str());
 	}
 
+	// 本体の設定ファイルからの取り出し: レイアウトファイルの項目のみ・同じ順序になる
+	if (argc >= 3) {
+		IniDoc ini, basic;
+		CHECK(ini.load(argv[2]));
+		CHECK(basic.load(argv[1]));
+		IniDoc ex = extract_layout(ini);
+		CHECK(!ex.sections.empty());
+		bool only_layout_keys = true, same_order = true;
+		for (auto& s : ex.sections) {
+			if (s.name.rfind("Window.", 0) != 0) only_layout_keys = false;
+			for (auto& l : s.lines) {
+				std::string k = l.substr(0, l.find('='));
+				static const char* allowed[] = { "left", "group", "area", "top", "hide", "right", "bottom", "floating", "x", "y", "w", "h", "zoom" };
+				bool ok = false;
+				for (auto a : allowed) if (k == a) ok = true;
+				if (!ok) { only_layout_keys = false; printf("  余計な項目: [%s] %s\n", s.name.c_str(), k.c_str()); }
+			}
+			// basic に同じセクションがあれば、項目の並びが一致すること
+			if (auto b = basic.find(s.name)) {
+				std::vector<std::string> kb, ke;
+				for (auto& l : b->lines) kb.push_back(l.substr(0, l.find('=')));
+				for (auto& l : s.lines) ke.push_back(l.substr(0, l.find('=')));
+				if (kb != ke) { same_order = false; printf("  並び不一致: [%s]\n", s.name.c_str()); }
+			}
+		}
+		CHECK(only_layout_keys);
+		CHECK(same_order);
+		printf("  取り出したセクション数=%zu (basic=%zu)\n", ex.sections.size(), basic.sections.size());
+	}
+
 	printf(failures ? "\n%d 件失敗\n" : "\nすべて成功\n", failures);
 	return failures ? 1 : 0;
 }
