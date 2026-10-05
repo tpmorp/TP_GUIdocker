@@ -297,7 +297,7 @@
     },
     {
       "id": "MENU_WS_GROUP",
-      "where": "「TP_GUIdocker」メニュー内の階層名",
+      "where": "「TP_GUIdocker」メニュー内の小分けの見出し (ワークスペース1〜9に切り替え)",
       "value": "ワークスペース",
       "status": "実装済み"
     },
@@ -371,6 +371,24 @@
       "id": "WS_MENU_COLOR_RESET",
       "where": "同上",
       "value": "テーマの色を本体設定に戻す",
+      "status": "実装済み"
+    },
+    {
+      "id": "MENU_GROUP_VIEW",
+      "where": "「TP_GUIdocker」メニュー内の小分けの見出し (ドラッグ時の表示・テーマの色)",
+      "value": "表示の設定",
+      "status": "実装済み"
+    },
+    {
+      "id": "MENU_GROUP_LAYOUT",
+      "where": "「TP_GUIdocker」メニュー内の小分けの見出し (配置を初期状態に戻す・無効時のレイアウトを選ぶ)",
+      "value": "配置の設定",
+      "status": "実装済み"
+    },
+    {
+      "id": "MENU_GROUP_TOOLS",
+      "where": "「TP_GUIdocker」メニュー内の小分けの見出し (見本を書き出す)",
+      "value": "指示用",
       "status": "実装済み"
     }
   ],

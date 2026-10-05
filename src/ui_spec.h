@@ -109,7 +109,7 @@ constexpr const wchar_t* BUTTON_OK = L"OK";
 constexpr const wchar_t* BUTTON_CANCEL = L"キャンセル";
 // 「TP_GUIdocker」→「ワークスペース」の項目 (ショートカットキー割り当て用。%d は番号) [実装済み]
 constexpr const wchar_t* MENU_WS_SWITCH = L"ワークスペース%dに切り替え";
-// 「TP_GUIdocker」メニュー内の階層名 [実装済み]
+// 「TP_GUIdocker」メニュー内の小分けの見出し (ワークスペース1〜9に切り替え) [実装済み]
 constexpr const wchar_t* MENU_WS_GROUP = L"ワークスペース";
 // 「TP_GUIdocker」メニューの項目 (ショートカットキー割り当て用。カーソルの下のパネルを最大化・元に戻す) [実装済み]
 constexpr const wchar_t* MENU_MAXIMIZE = L"パネルを最大化・元に戻す";
@@ -135,6 +135,12 @@ constexpr const wchar_t* EXPORT_NEED_ACTIVE = L"見本は TP_GUIdockerの有効�
 constexpr const wchar_t* WS_MENU_COLOR = L"テーマの色を変える…";
 // 同上 [実装済み]
 constexpr const wchar_t* WS_MENU_COLOR_RESET = L"テーマの色を本体設定に戻す";
+// 「TP_GUIdocker」メニュー内の小分けの見出し (ドラッグ時の表示・テーマの色) [実装済み]
+constexpr const wchar_t* MENU_GROUP_VIEW = L"表示の設定";
+// 「TP_GUIdocker」メニュー内の小分けの見出し (配置を初期状態に戻す・無効時のレイアウトを選ぶ) [実装済み]
+constexpr const wchar_t* MENU_GROUP_LAYOUT = L"配置の設定";
+// 「TP_GUIdocker」メニュー内の小分けの見出し (見本を書き出す) [実装済み]
+constexpr const wchar_t* MENU_GROUP_TOOLS = L"指示用";
 
 //---------------------------------------------------------------------
 //	見た目 (数値で指定するもの。本体設定に連動する項目は host.cpp で読む)

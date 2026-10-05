@@ -62,7 +62,8 @@ static void register_workspace_menus(HOST_APP_TABLE* host) {
 	for (int i = 0; i < count; i++) {
 		wchar_t item[128];
 		swprintf_s(item, ui::MENU_WS_SWITCH, i + 1);
-		names.push_back(std::wstring(TPGD_NAME L"\\") + ui::MENU_WS_GROUP + L"\\" + item);
+		// ※ 本体の登録は1段の階層までしか作れないため、小分けはメニューを作った後にプラグインが行う (dock.cpp の organize_menu)
+		names.push_back(std::wstring(TPGD_NAME L"\\") + item);
 		host->register_edit_menu(names.back().c_str(), handlers[i]);
 	}
 }

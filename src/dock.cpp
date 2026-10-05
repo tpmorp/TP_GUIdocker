@@ -1041,6 +1041,7 @@ static void watch() {
 //---------------------------------------------------------------------
 
 static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR);
+static void organize_menu();
 static void exit_dock(bool apply_return);
 
 static void subclass_main() {
@@ -1741,6 +1742,10 @@ static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 			if (g_active) { position_container(); relayout(); }
 			return r;
 		}
+		case WM_INITMENUPOPUP:
+			// 本体がメニューを作り直していても、開く前に小分けを整える
+			organize_menu();
+			break;
 		case WM_COMMAND:
 			// メディアエクスプローラーは切り離せない (本体の仕様) ため、自由分割中は開かせない
 			if (g_active && HIWORD(wp) == 0 && g_explorer_cmds.count(LOWORD(wp))) {
@@ -1844,6 +1849,101 @@ static void update_toggle_menu() {
 	mii.fMask = MIIM_STRING;
 	mii.dwTypeData = (LPWSTR)label;
 	SetMenuItemInfoW(menu, id, FALSE, &mii);
+}
+
+// メニューの中から、文字が一致するサブメニューを探す (サブメニューもたどる)
+static HMENU find_popup_by_text(HMENU menu, const wchar_t* text) {
+	int n = GetMenuItemCount(menu);
+	for (int i = 0; i < n; i++) {
+		HMENU sub = GetSubMenu(menu, i);
+		if (!sub) continue;
+		wchar_t buf[256] = {};
+		GetMenuStringW(menu, i, buf, 256, MF_BYPOSITION);
+		if (wcscmp(buf, text) == 0) return sub;
+		if (HMENU found = find_popup_by_text(sub, text)) return found;
+	}
+	return nullptr;
+}
+
+// 「TP_GUIdocker」メニューを用途ごとに小分けにする
+// 本体の登録の仕組みは1段の階層までしか作れないため、本体がメニューを作った後に並べ替える。
+// 項目の番号 (押した時の動作) はそのまま使うので、働きは変わらない。何度呼んでもよい
+static void organize_menu() {
+	HWND main = g_main ? g_main : find_main_window();
+	HMENU bar = main ? GetMenu(main) : nullptr;
+	if (!bar) return;
+	HMENU tp = find_popup_by_text(bar, TPGD_NAME);
+	if (!tp) return;
+
+	// 平たく並んでいる項目を集める (既に小分け済みなら何もしない)
+	struct Item { UINT id; std::wstring text; };
+	std::vector<Item> items;
+	int n = GetMenuItemCount(tp);
+	for (int i = 0; i < n; i++) {
+		if (GetSubMenu(tp, i)) return;  // 小分け済み
+		UINT id = GetMenuItemID(tp, i);
+		if (id == 0 || id == (UINT)-1) continue;  // 区切り線
+		wchar_t buf[256] = {};
+		GetMenuStringW(tp, i, buf, 256, MF_BYPOSITION);
+		items.push_back({ id, buf });
+	}
+	if (items.empty()) return;
+
+	// 文字で項目を取り出す (取り出したものは一覧から外す)
+	auto take = [&](std::initializer_list<std::wstring> texts, Item& out) {
+		for (auto it = items.begin(); it != items.end(); ++it) {
+			for (auto& t : texts) {
+				if (it->text == t) {
+					out = *it;
+					items.erase(it);
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+	auto add = [](HMENU m, const Item& it) { AppendMenuW(m, MF_STRING, it.id, it.text.c_str()); };
+
+	// 元の項目を消してから、決めた順に並べ直す
+	while (GetMenuItemCount(tp) > 0) RemoveMenu(tp, 0, MF_BYPOSITION);
+	Item it;
+	if (take({ ui::MENU_ENABLE, ui::MENU_DISABLE }, it)) add(tp, it);
+	AppendMenuW(tp, MF_SEPARATOR, 0, nullptr);
+
+	HMENU ws = CreatePopupMenu();
+	for (int i = 1; i <= 9; i++) {
+		wchar_t name[128];
+		swprintf_s(name, ui::MENU_WS_SWITCH, i);
+		if (take({ name }, it)) add(ws, it);
+	}
+	AppendMenuW(tp, MF_POPUP, (UINT_PTR)ws, ui::MENU_WS_GROUP);
+	if (take({ ui::MENU_MAXIMIZE }, it)) add(tp, it);
+	if (take({ ui::MENU_LOCK, ui::MENU_UNLOCK }, it)) add(tp, it);
+	AppendMenuW(tp, MF_SEPARATOR, 0, nullptr);
+
+	HMENU view = CreatePopupMenu();
+	if (take({ ui::MENU_DROP_STYLE_COMPASS, ui::MENU_DROP_STYLE_REGION }, it)) add(view, it);
+	if (take({ ui::WS_MENU_COLOR }, it)) add(view, it);
+	if (take({ ui::WS_MENU_COLOR_RESET }, it)) add(view, it);
+	AppendMenuW(tp, MF_POPUP, (UINT_PTR)view, ui::MENU_GROUP_VIEW);
+
+	HMENU layout = CreatePopupMenu();
+	if (take({ ui::MENU_RESET }, it)) add(layout, it);
+	if (take({ ui::MENU_CHOOSE_RETURN }, it)) add(layout, it);
+	AppendMenuW(tp, MF_POPUP, (UINT_PTR)layout, ui::MENU_GROUP_LAYOUT);
+	AppendMenuW(tp, MF_SEPARATOR, 0, nullptr);
+
+	HMENU tools = CreatePopupMenu();
+	if (take({ ui::MENU_EXPORT_SAMPLES }, it)) add(tools, it);
+	AppendMenuW(tp, MF_POPUP, (UINT_PTR)tools, ui::MENU_GROUP_TOOLS);
+
+	// 想定外の項目 (文言の変更直後など) は末尾に残す
+	if (!items.empty()) {
+		AppendMenuW(tp, MF_SEPARATOR, 0, nullptr);
+		for (auto& rest : items) add(tp, rest);
+		log(L"メニューの小分けで、置き場所の決まっていない項目が " + std::to_wstring(items.size()) + L" 件あった");
+	}
+	log(L"「TP_GUIdocker」メニューを小分けにした");
 }
 
 // 「レイアウトをロック」の項目の文字を、今の状態に合わせる
@@ -2026,6 +2126,7 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				}
 				g_main = main;
 				subclass_main();
+				organize_menu();
 				update_toggle_menu();
 				update_lock_menu();
 				// 前回が有効のまま終了、または異常終了した場合は有効化して始める
