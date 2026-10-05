@@ -14,11 +14,11 @@ AviUtl2 標準の画面は固定5区画で構成され、区画の数・分け�
 詳細は [docs/plan.md](docs/plan.md) を参照。
 
 ## 現状
-段階0（技術検証）。本体パネルを「切り離し」た独立窓を、自前のコンテナ窓へはめ込めるかを検証中。
+段階0（技術検証）。本体パネルを「切り離し」た独立窓を自前のコンテナ窓へはめ込めることを確認済み。本体のレイアウト機能による全自動取り込みを検証中。
 
 ## 構成
-- `experiments/dock_probe/` — 段階0の検証用プラグイン
-- `tools/probe_windows.ps1` — AviUtl2 の窓構造を読み取り専用で一覧化する調査スクリプト
+- `src/` — プラグイン本体のソース（現在は段階0の技術検証版）
+- `tools/` — AviUtl2 の窓構造・メニュー構造を読み取り専用で一覧化する調査スクリプト
 - `third_party/aviutl2_sdk/` — AviUtl2 SDK（非公式ミラー、サブモジュール）
 
 ## ビルド
@@ -26,7 +26,7 @@ Visual Studio 2026 Build Tools（MSVC, x64）が必要。
 
 ```bat
 git submodule update --init
-experiments\dock_probe\build.bat
+src\build.bat
 ```
 
-生成された `experiments/dock_probe/out/dock_probe.aux2` を `C:\ProgramData\aviutl2\Plugin` に置く。
+生成された `src/out/TP_GUIdocker.aux2` を `C:\ProgramData\aviutl2\Plugin` に置く。
