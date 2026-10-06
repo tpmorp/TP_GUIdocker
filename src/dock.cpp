@@ -2194,9 +2194,12 @@ static void organize_menu() {
 	AppendMenuW(tp, MF_POPUP, (UINT_PTR)layout, ui::MENU_GROUP_LAYOUT);
 	AppendMenuW(tp, MF_SEPARATOR, 0, nullptr);
 
+#ifdef TPGD_DEV
+	// 開発用 (配布版には項目自体が無い)
 	HMENU tools = CreatePopupMenu();
 	if (take({ ui::MENU_EXPORT_SAMPLES }, it)) add(tools, it);
 	AppendMenuW(tp, MF_POPUP, (UINT_PTR)tools, ui::MENU_GROUP_TOOLS);
+#endif
 
 	// 想定外の項目 (文言の変更直後など) は末尾に残す
 	if (!items.empty()) {
@@ -2643,7 +2646,8 @@ bool dock_init() {
 }
 
 void dock_cleanup_legacy() {
-	// 開発中の診断で作った試験用レイアウトを削除する
+#ifdef TPGD_DEV
+	// 開発中の診断で作った試験用レイアウトを削除する (配布版の利用者の環境には無いため、開発版だけで行う)
 	WIN32_FIND_DATAW fd;
 	std::wstring dir = layout_dir();
 	HANDLE h = FindFirstFileW((dir + L"\\" TPGD_NAME L"_試験*.layout").c_str(), &fd);
@@ -2653,6 +2657,7 @@ void dock_cleanup_legacy() {
 		if (DeleteFileW(path.c_str())) log(L"不要になった試験用レイアウトを削除: " + std::wstring(fd.cFileName));
 	} while (FindNextFileW(h, &fd));
 	FindClose(h);
+#endif
 }
 
 void dock_request_startup() { if (g_container) PostMessageW(g_container, WM_APP_STARTUP, 0, 0); }

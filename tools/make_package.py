@@ -1,7 +1,7 @@
 """
 TP_GUIdocker の配布用パッケージ (au2pkg.zip) を作る。
 
-  入力: src/out/TP_GUIdocker.aux2 (src/build.bat でビルドしたもの)
+  入力: src/out/release/TP_GUIdocker.aux2 (配布版。このスクリプトが src/build.bat release でビルドする)
         dist/README.txt (説明書き。{VERSION} は版に置き換える)
         dist/TP_GUIdocker_fonts/ (同梱の書体と許諾文書)
   出力: dist/out/TP_GUIdocker_<版>.au2pkg.zip
@@ -12,12 +12,14 @@ au2pkg.zip は AviUtl2 のデータフォルダを起点に展開される。プ
 使い方: py -3 tools/make_package.py
 """
 import re
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-AUX2 = ROOT / "src" / "out" / "TP_GUIdocker.aux2"
+BUILD = ROOT / "src" / "build.bat"
+AUX2 = ROOT / "src" / "out" / "release" / "TP_GUIdocker.aux2"   # 配布版 (開発用の項目を含まない)
 COMMON_H = ROOT / "src" / "common.h"
 README = ROOT / "dist" / "README.txt"
 FONTS = ROOT / "dist" / "TP_GUIdocker_fonts"
@@ -34,12 +36,15 @@ def version():
 
 def main():
     ver = version()
-    if not AUX2.exists():
-        sys.exit(f"{AUX2} が無い。先に src\\build.bat でビルドすること")
-    # ビルドが古いまま包むのを防ぐ
-    newest_src = max(p.stat().st_mtime for p in (ROOT / "src").glob("*.[ch]*") if p.is_file())
-    if AUX2.stat().st_mtime < newest_src:
-        sys.exit("TP_GUIdocker.aux2 がソースより古い。src\\build.bat でビルドし直すこと")
+    # 配布版を毎回ビルドし直す (古いものや開発版を包む事故を防ぐ)
+    print("配布版をビルドしています…")
+    # ※ 作業フォルダ名の全角空白を cmd が区切りとみなすため、build.bat のある場所から相対 (.\) で呼ぶ
+    r = subprocess.run(["cmd", "/c", ".\\" + BUILD.name, "release"], cwd=BUILD.parent, capture_output=True)
+    if r.returncode != 0 or not AUX2.exists():
+        sys.stdout.buffer.write(r.stdout + r.stderr)
+        sys.exit("配布版のビルドに失敗した")
+    if AUX2.read_bytes().find("見本を書き出す".encode("utf-16-le")) >= 0:
+        sys.exit("配布版に開発用の項目が残っている")
     fonts = sorted(p for p in FONTS.iterdir() if p.is_file())
     if not any(p.suffix.lower() in (".ttf", ".otf", ".ttc") for p in fonts):
         sys.exit(f"{FONTS} に書体が無い")

@@ -19,7 +19,8 @@ AviUtl ExEdit2（AviUtl2）向けの汎用プラグイン（`.aux2`、C++、Win3
 
 ```bat
 git submodule update --init          :: AviUtl2 SDK (third_party/aviutl2_sdk)
-src\build.bat                        :: プラグイン → src\out\TP_GUIdocker.aux2 (MSVC x64, /W4 で警告ゼロを保つ)
+src\build.bat                        :: 開発版 → src\out\TP_GUIdocker.aux2 (MSVC x64, /W4 で警告ゼロを保つ。TPGD_DEV 定義あり)
+src\build.bat release                :: 配布版 → src\out\release\TP_GUIdocker.aux2 (TPGD_DEV 無し)
 tests\build_test.bat                 :: 単体テスト → tests\out\test_core.exe
 tests\out\test_core.exe C:\ProgramData\aviutl2\Default\basic.layout C:\ProgramData\aviutl2\aviutl2.ini
 py -3 tools\gen_ui_spec.py           :: docs\ui_spec.json → src\ui_spec.h と docs\TP_GUIdocker_指示書.xlsx
@@ -30,6 +31,7 @@ py -3 tools\make_package.py          :: 配布用 → dist\out\TP_GUIdocker_<版
 - ビルドには Visual Studio 2026 Build Tools（`vcvars64.bat` のパスは build.bat に直書き）が必要。Git Bash から .bat を呼ぶと失敗するため PowerShell から `cmd /c` で実行する。
 - 単体テストは1本の実行ファイル。引数（本番の basic.layout と aviutl2.ini）を省くと、ファイルを使う試験は飛ばされる。
 - 実機確認は AviUtl2 上でのみ可能（自動試験は無い）。
+- 開発段階でだけ使う項目（「指示用」メニュー・見本の書き出し・診断の後始末など）は `#ifdef TPGD_DEV` で囲み、配布版に含めない。新しく開発用の項目を足す時も同様にする。`make_package.py` は配布版を毎回ビルドし直し、開発用の文言が残っていれば止まる。
 
 ## 構成の要点
 

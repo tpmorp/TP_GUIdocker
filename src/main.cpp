@@ -45,7 +45,9 @@ static void on_choose_return(EDIT_SECTION*) { dock_request_choose_return_layout(
 static void on_drop_style(EDIT_SECTION*) { dock_request_toggle_drop_style(); }
 static void on_maximize(EDIT_SECTION*) { dock_request_maximize(); }
 static void on_lock(EDIT_SECTION*) { dock_request_toggle_lock(); }
+#ifdef TPGD_DEV
 static void on_export_samples(EDIT_SECTION*) { dock_request_export_samples(); }
+#endif
 static void on_theme(EDIT_SECTION*) { dock_request_theme_color(false); }
 static void on_theme_reset(EDIT_SECTION*) { dock_request_theme_color(true); }
 template <int N> static void on_workspace(EDIT_SECTION*) { dock_request_switch_workspace(N - 1); }
@@ -69,7 +71,11 @@ static void register_workspace_menus(HOST_APP_TABLE* host) {
 }
 
 EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
+#ifdef TPGD_DEV
+	log(L"===== 起動 version " TPGD_VERSION L" 開発版 (本体 " + std::to_wstring(g_host_version) + L") =====");
+#else
 	log(L"===== 起動 version " TPGD_VERSION L" (本体 " + std::to_wstring(g_host_version) + L") =====");
+#endif
 	g_settings.load();
 	dock_cleanup_legacy();
 	install_menu_hooks();
@@ -94,8 +100,11 @@ EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
 	static const std::wstring drop_name = std::wstring(TPGD_NAME L"\\") +
 		(style == 0 ? ui::MENU_DROP_STYLE_COMPASS : ui::MENU_DROP_STYLE_REGION);
 	host->register_edit_menu(drop_name.c_str(), on_drop_style);
+#ifdef TPGD_DEV
+	// 開発用 (指示書・見本の作成)。配布版 (build.bat release) には含めない
 	static const std::wstring samples_name = std::wstring(TPGD_NAME L"\\") + ui::MENU_EXPORT_SAMPLES;
 	host->register_edit_menu(samples_name.c_str(), on_export_samples);
+#endif
 	static const std::wstring theme_name = std::wstring(TPGD_NAME L"\\") + ui::WS_MENU_COLOR;
 	host->register_edit_menu(theme_name.c_str(), on_theme);
 	static const std::wstring theme_reset_name = std::wstring(TPGD_NAME L"\\") + ui::WS_MENU_COLOR_RESET;
