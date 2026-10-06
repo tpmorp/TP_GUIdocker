@@ -207,7 +207,7 @@ static int footer_height() { return style_size("FooterHeight", 24, g_scale); }
 
 // 帯の文字
 // 書体は指示書の FONT (空ならメニューバーと同じ書体)、大きさはメニューバーの文字と同じ (今の表示倍率のもの)。
-// パソコンに無い書体は、DLL と同じ場所の「TP_GUIdocker_フォント」フォルダに置けば、プラグインの中だけで読み込んで使う
+// パソコンに無い書体は、DLL と同じ場所の「TP_GUIdocker_fonts」フォルダに置けば、プラグインの中だけで読み込んで使う
 static std::vector<std::wstring> g_private_fonts;
 
 static int CALLBACK font_found_proc(const LOGFONTW*, const TEXTMETRICW*, DWORD, LPARAM lp) {
@@ -226,9 +226,9 @@ static bool font_exists(const wchar_t* face) {
 	return found;
 }
 
-// 「TP_GUIdocker_フォント」フォルダの書体を、このプロセスの中だけで使えるようにする
+// 「TP_GUIdocker_fonts」フォルダの書体を、このプロセスの中だけで使えるようにする
 static void load_private_fonts() {
-	std::wstring dir = module_dir() + L"\\" TPGD_NAME L"_フォント";
+	std::wstring dir = module_dir() + L"\\" TPGD_NAME L"_fonts";
 	for (const wchar_t* ext : { L"*.ttf", L"*.otf", L"*.ttc" }) {
 		WIN32_FIND_DATAW fd;
 		HANDLE h = FindFirstFileW((dir + L"\\" + ext).c_str(), &fd);
@@ -1603,7 +1603,7 @@ bool capture_to_bmp(const RECT& r, const std::wstring& path) {
 //---------------------------------------------------------------------
 //	フォントの比較 (指示用)
 //	候補の書体ごとに帯とタブを描き直して撮影し、加えて文字の見本を描いて保存する。
-//	未導入の書体は、DLL と同じ場所の「TP_GUIdocker_フォント」フォルダに置けば、プラグインの中だけで読み込む
+//	未導入の書体は、DLL と同じ場所の「TP_GUIdocker_fonts」フォルダに置けば、プラグインの中だけで読み込む
 //---------------------------------------------------------------------
 
 struct FontCandidate {

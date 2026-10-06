@@ -24,6 +24,7 @@ tests\build_test.bat                 :: 単体テスト → tests\out\test_core.
 tests\out\test_core.exe C:\ProgramData\aviutl2\Default\basic.layout C:\ProgramData\aviutl2\aviutl2.ini
 py -3 tools\gen_ui_spec.py           :: docs\ui_spec.json → src\ui_spec.h と docs\TP_GUIdocker_指示書.xlsx
 py -3 tools\make_samples.py          :: プラグインの「見本を書き出す」の撮影結果 → docs\TP_GUIdocker_見本.pdf
+py -3 tools\make_package.py          :: 配布用 → dist\out\TP_GUIdocker_<版>.au2pkg.zip (説明書き dist\README.txt と書体を同梱)
 ```
 
 - ビルドには Visual Studio 2026 Build Tools（`vcvars64.bat` のパスは build.bat に直書き）が必要。Git Bash から .bat を呼ぶと失敗するため PowerShell から `cmd /c` で実行する。
@@ -56,7 +57,7 @@ py -3 tools\make_samples.py          :: プラグインの「見本を書き出�
 すべて `docs/ui_spec.json` を元データとし、`tools/gen_ui_spec.py` で `src/ui_spec.h`（`tpgd::ui::` の定数）と指示書（Excel）を生成する。`ui_spec.h` は直接編集しない。ユーザーは指示書の「修正指示」欄で指示し、反映したものは `ui_spec.json` の `history` に記録すると指示書の欄から消える（「反映の記録」シートに残る）。指示書が Excel で開かれていると更新は見送られる。
 
 ### 帯の書体
-帯とタブの文字は指示書の `FONT`（現在 IBM Plex Sans JP、大きさはメニューバーの文字と同じ）。プラグインは起動時に DLL と同じ場所の `TP_GUIdocker_フォント` フォルダの書体をプロセス内だけで読み込む（`AddFontResourceExW` の `FR_PRIVATE`、Windows へはインストールしない）。配布用の書体と許諾文書は `dist/TP_GUIdocker_フォント`（SIL Open Font License 1.1。許諾文書を必ず同梱し、書体を改変・改名しない）。書体が見つからない時はメニューバーと同じ書体で描く。
+帯とタブの文字は指示書の `FONT`（現在 IBM Plex Sans JP、大きさはメニューバーの文字と同じ）。プラグインは起動時に DLL と同じ場所の `TP_GUIdocker_fonts` フォルダの書体をプロセス内だけで読み込む（`AddFontResourceExW` の `FR_PRIVATE`、Windows へはインストールしない）。配布用の書体と許諾文書は `dist/TP_GUIdocker_fonts`（SIL Open Font License 1.1。許諾文書を必ず同梱し、書体を改変・改名しない）。書体が見つからない時はメニューバーと同じ書体で描く。
 
 ### 安全装置
 - 有効化の各段階で失敗したら `abort_enter` で全返却して標準画面へ戻す。本体のバージョンが変わったら利用者に確認する。
