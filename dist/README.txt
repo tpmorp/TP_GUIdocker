@@ -12,16 +12,21 @@ AviUtl ExEdit2（AviUtl2）の画面を、After Effects のように自由に分
   これ以外の版の AviUtl2 では、初回に確認の画面が出ます。
 
 
-■ 導入のしかた
-  1. AviUtl2 を起動する
-  2. このファイル（TP_GUIdocker_{VERSION}.au2pkg.zip）を、AviUtl2 のプレビュー画面へ
-     ドラッグ＆ドロップする
-  3. AviUtl2 を再起動する
-  4. 「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdockerを有効化」を選ぶ
+■ 導入のしかた（おすすめ: 手で置く方法）
+  1. AviUtl2 を終了する
+  2. このファイル（TP_GUIdocker_{VERSION}.au2pkg.zip）を展開する
+  3. 展開してできた「Plugin」フォルダの中の「TP_GUIdocker」フォルダを、
+     AviUtl2 のデータフォルダの「Plugin」フォルダへコピーする
+     （通常は C:\ProgramData\aviutl2\Plugin。コピー後は
+       C:\ProgramData\aviutl2\Plugin\TP_GUIdocker\TP_GUIdocker.aux2 になる）
+  4. AviUtl2 を起動する
+  5. 「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdockerを有効化」を選ぶ
 
-  ※ ドラッグ＆ドロップで入らない場合は、zip を展開し、中の「Plugin」フォルダの
-     中身を AviUtl2 のデータフォルダの「Plugin」フォルダへコピーしてください
-     （通常は C:\ProgramData\aviutl2\Plugin）。
+  ※ zip を AviUtl2 のプレビュー画面へドラッグ＆ドロップして導入する方法もありますが、
+     入れている他のプラグインによっては、その最中に AviUtl2 が落ちることがあります
+     （導入の際に AviUtl2 が全プラグインを読み込み直し、それに対応していない
+       プラグインが落ちるため。TP_GUIdocker 以外のパッケージでも起きます）。
+     落ちた場合は、上の「手で置く方法」で導入してください。
 
 
 ■ 基本の操作

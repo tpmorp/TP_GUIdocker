@@ -29,8 +29,9 @@ EXTERN_C __declspec(dllexport) bool InitializePlugin(DWORD version) {
 }
 
 EXTERN_C __declspec(dllexport) void UninitializePlugin() {
-	uninstall_menu_hooks();
+	// 有効中に解放される場合 (本体の起動中の読み込み直し) は、元の画面へ戻す処理で横取りを使うため、横取りは最後に外す
 	dock_shutdown();
+	uninstall_menu_hooks();
 	log(L"終了");
 }
 

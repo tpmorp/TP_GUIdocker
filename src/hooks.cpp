@@ -127,6 +127,12 @@ static void unpatch_iat(HMODULE module, const char* dll, const char* func, void*
 		// 他のプラグインが後から重ねている。外すと連鎖が切れるため元に戻す
 		patch_iat(module, dll, func, current);
 		log(std::wstring(L"他のプラグインが後から差し替えているため、横取りを残す: ") + utf8_to_wide(func));
+		// 横取りが残る以上、この DLL が取り外されると取り外し済みの処理が呼ばれて本体が落ちる。
+		// 本体の起動中に読み込み直された場合に備え、この DLL を本体の終了までメモリに残す
+		HMODULE self = nullptr;
+		if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, (LPCWSTR)ours, &self)) {
+			log(L"横取りが残るため、プラグインを本体の終了までメモリに残す");
+		}
 	}
 }
 

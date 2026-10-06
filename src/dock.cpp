@@ -2614,20 +2614,36 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 //	公開関数
 //---------------------------------------------------------------------
 
+// このプラグイン (DLL) 自身
+extern "C" IMAGE_DOS_HEADER __ImageBase;
+static HINSTANCE dll_instance() { return (HINSTANCE)&__ImageBase; }
+
 bool dock_init() {
 	WNDCLASSEXW wc = {};
 	wc.cbSize = sizeof(wc);
 	wc.lpszClassName = CONTAINER_CLASS;
 	wc.lpfnWndProc = container_proc;
-	wc.hInstance = GetModuleHandleW(nullptr);
+	wc.hInstance = dll_instance();
 	wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
 	if (!RegisterClassExW(&wc)) {
-		log(L"入れ物の窓クラスを登録できない");
-		return false;
+		bool registered = false;
+		if (GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+			// 本体の起動中にプラグインが読み込み直された場合 (パッケージの導入時など)、前の読み込みの登録が残っていることがある。
+			// 残った登録は取り外し済みの処理を指していて危険なため、消してから登録し直す
+			// (0.4.7 までは本体 (exe) の名義で登録していたため、その名義の分も消す)
+			UnregisterClassW(CONTAINER_CLASS, dll_instance());
+			UnregisterClassW(CONTAINER_CLASS, GetModuleHandleW(nullptr));
+			log(L"前の読み込みで残った入れ物の窓クラスを登録し直す");
+			registered = RegisterClassExW(&wc) != 0;
+		}
+		if (!registered) {
+			log(L"入れ物の窓クラスを登録できない");
+			return false;
+		}
 	}
 	// メイン窓がまだ無いため、いったん非表示の独立窓として作る (開始時にメイン窓の子にする)
 	g_container = CreateWindowExW(WS_EX_TOOLWINDOW, CONTAINER_CLASS, TPGD_NAME, WS_POPUP | WS_CLIPCHILDREN,
-		0, 0, 100, 100, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+		0, 0, 100, 100, nullptr, nullptr, dll_instance(), nullptr);
 	if (!g_container) {
 		log(L"入れ物の窓を作れない");
 		return false;
@@ -2671,11 +2687,19 @@ void dock_request_theme_color(bool reset) { if (g_container) PostMessageW(g_cont
 void dock_request_reset_tree() { if (g_container) PostMessageW(g_container, WM_APP_RESET_TREE, 0, 0); }
 void dock_request_choose_return_layout() { if (g_container) PostMessageW(g_container, WM_APP_CHOOSE_RETURN, 0, 0); }
 
+// プラグインの解放時 (本体の終了時のほか、本体の起動中にプラグインが読み込み直される時にも呼ばれる)。
+// 解放後に本体がこの DLL の処理を呼ばないよう、差し込んだもの (窓の横取り・窓クラス・重ね窓) をすべて外す
 void dock_shutdown() {
+	log(L"プラグインの解放 (有効中=" + std::to_wstring(g_active) + L")");
+	if (GetCapture() == g_container) ReleaseCapture();
+	g_overlay.hide();
+	g_ghost.hide();
 	if (g_active) exit_dock(g_main && IsWindow(g_main) && !g_main_destroying);
 	if (g_main_subclassed && g_main && IsWindow(g_main)) RemoveWindowSubclass(g_main, main_subclass_proc, MAIN_SUBCLASS_ID);
+	g_main_subclassed = false;
 	if (g_container) DestroyWindow(g_container);
 	g_container = nullptr;
+	UnregisterClassW(CONTAINER_CLASS, dll_instance());
 	if (g_font) DeleteObject(g_font);
 	g_font = nullptr;
 	unload_private_fonts();
