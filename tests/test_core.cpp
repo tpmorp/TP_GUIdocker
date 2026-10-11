@@ -10,6 +10,7 @@
 #include "../src/layout_file.h"
 #include "../src/dock_layout.h"
 #include "../src/common.h"
+#include "../src/menu_find.h"
 #include <algorithm>
 
 using namespace tpgd;
@@ -22,6 +23,104 @@ static std::string read_all(const std::wstring& path) {
 	std::stringstream ss;
 	ss << in.rdbuf();
 	return ss.str();
+}
+
+// 本体のメニューの模型を作る (view: 「表示」の名前, layout_parent_is_view: レイアウトを「表示」の下に置くか)
+struct FakeMenu {
+	HMENU bar, view, layout, other;
+};
+static FakeMenu make_menu(const wchar_t* view_name, const wchar_t* layout_name, const wchar_t* create_name, bool layout_under_view) {
+	FakeMenu m;
+	m.bar = CreateMenu();
+	m.view = CreatePopupMenu();
+	m.layout = CreatePopupMenu();
+	m.other = CreatePopupMenu();
+	AppendMenuW(m.layout, MF_STRING, 101, create_name);
+	AppendMenuW(m.layout, MF_SEPARATOR, 0, nullptr);
+	AppendMenuW(m.layout, MF_STRING, 102, L"basic");
+	AppendMenuW(m.layout, MF_STRING, 103, L"TP_GUIdocker_元の配置");
+	AppendMenuW(m.view, MF_STRING, 201, L"プレビュー編集");
+	AppendMenuW(m.view, MF_STRING, 202, L"レイヤー編集\tCtrl+L");
+	HMENU explorer = CreatePopupMenu();
+	AppendMenuW(explorer, MF_STRING, 301, L"メディアエクスプローラー1");
+	AppendMenuW(m.view, MF_POPUP, (UINT_PTR)explorer, L"メディアエクスプローラー");
+	AppendMenuW(m.other, MF_STRING, 401, L"何かの項目");
+	AppendMenuW(m.bar, MF_POPUP, (UINT_PTR)CreatePopupMenu(), L"ファイル(&F)");
+	if (layout_under_view) {
+		AppendMenuW(m.view, MF_POPUP, (UINT_PTR)m.layout, layout_name);
+	} else {
+		// 他のプラグインが「レイアウト」を別のメニューへ移した場合
+		AppendMenuW(m.other, MF_POPUP, (UINT_PTR)m.layout, layout_name);
+	}
+	AppendMenuW(m.bar, MF_POPUP, (UINT_PTR)m.view, view_name);
+	AppendMenuW(m.bar, MF_POPUP, (UINT_PTR)m.other, L"拡張");
+	return m;
+}
+
+static void test_menu_find() {
+	// 文字のそろえ方
+	CHECK(normalize_menu_text(L"表示(&V)") == L"表示");
+	CHECK(normalize_menu_text(L"表示（&V）") == L"表示");
+	CHECK(normalize_menu_text(L"&表示") == L"表示");
+	CHECK(normalize_menu_text(L"レイアウトを作成...") == L"レイアウトを作成");
+	CHECK(normalize_menu_text(L"レイアウトを作成…") == L"レイアウトを作成");
+	CHECK(normalize_menu_text(L"レイヤー編集\tCtrl+L") == L"レイヤー編集");
+	CHECK(normalize_menu_text(L"  TP_GUIdocker_元の配置 ") == L"TP_GUIdocker_元の配置");
+	CHECK(normalize_menu_text(L"A&&B") == L"A&B");
+
+	// 標準の構成: 道筋で見つかる
+	{
+		FakeMenu m = make_menu(L"表示", L"レイアウト", L"レイアウトを作成", true);
+		std::wstring how;
+		CHECK(find_host_command(m.bar, { L"表示", L"レイアウト", L"レイアウトを作成" }, &how) == 101);
+		CHECK(how == L"道筋");
+		CHECK(find_host_command(m.bar, { L"表示", L"レイアウト", L"TP_GUIdocker_元の配置" }) == 103);
+		CHECK(find_host_command(m.bar, { L"表示", L"レイヤー編集" }) == 202);
+		CHECK(find_host_command(m.bar, { L"表示", L"レイアウト", L"無いレイアウト" }) == 0);
+		CHECK(find_host_command(m.bar, { L"表示", L"無いパネル" }) == 0);
+		CHECK(find_view_menu(m.bar) == m.view);
+		DestroyMenu(m.bar);
+	}
+	// アクセスキーや「...」が付けられている
+	{
+		FakeMenu m = make_menu(L"表示(&V)", L"レイアウト(&L)", L"レイアウトを作成...", true);
+		CHECK(find_host_command(m.bar, { L"表示", L"レイアウト", L"レイアウトを作成" }) == 101);
+		CHECK(find_host_command(m.bar, { L"表示", L"レイアウト", L"basic" }) == 102);
+		CHECK(find_host_command(m.bar, { L"表示", L"プレビュー編集" }) == 201);
+		DestroyMenu(m.bar);
+	}
+	// 「表示」が別名 (道筋では見つからず、目印から探す)
+	{
+		FakeMenu m = make_menu(L"ビュー", L"レイアウト", L"レイアウトを作成", true);
+		std::wstring how;
+		CHECK(find_host_command(m.bar, { L"表示", L"レイアウト", L"レイアウトを作成" }, &how) == 101);
+		CHECK(how == L"レイアウトの目印");
+		CHECK(find_host_command(m.bar, { L"表示", L"プレビュー編集" }, &how) == 201);
+		CHECK(how == L"表示の目印");
+		CHECK(find_view_menu(m.bar) == m.view);
+		int pos = find_menu_item(find_view_menu(m.bar), L"メディアエクスプローラー");
+		CHECK(pos >= 0 && GetMenuItemID(GetSubMenu(find_view_menu(m.bar), pos), 0) == 301);
+		DestroyMenu(m.bar);
+	}
+	// 「レイアウト」が別のメニューへ移され、名前も変えられている
+	{
+		FakeMenu m = make_menu(L"表示", L"配置の保存", L"レイアウトを作成", false);
+		CHECK(find_layout_menu(m.bar) == m.layout);
+		CHECK(find_host_command(m.bar, { L"表示", L"レイアウト", L"レイアウトを作成" }) == 101);
+		CHECK(find_host_command(m.bar, { L"表示", L"レイアウト", L"TP_GUIdocker_元の配置" }) == 103);
+		// 「表示」は名前で見つかるので、パネルはそちらから
+		CHECK(find_host_command(m.bar, { L"表示", L"レイヤー編集" }) == 202);
+		DestroyMenu(m.bar);
+	}
+	// 「レイアウトを作成」がどこにも無い
+	{
+		FakeMenu m = make_menu(L"表示", L"レイアウト", L"別の項目", true);
+		CHECK(find_layout_menu(m.bar) == nullptr);
+		CHECK(find_host_command(m.bar, { L"表示", L"レイアウト", L"レイアウトを作成" }) == 0);
+		CHECK(!dump_menu(m.bar, 3).empty());
+		DestroyMenu(m.bar);
+	}
+	CHECK(find_host_command(nullptr, { L"表示" }) == 0);
 }
 
 int wmain(int argc, wchar_t** argv) {
@@ -245,6 +344,8 @@ int wmain(int argc, wchar_t** argv) {
 		CHECK(match_slot(plan.slots, { 99999, 99999 }).empty());
 		CHECK(match_slot(plan.slots, { plan.slots[0].pt.x + 20, plan.slots[0].pt.y + 20 }).empty());
 	}
+
+	test_menu_find();
 
 	printf(failures ? "\n%d 件失敗\n" : "\nすべて成功\n", failures);
 	return failures ? 1 : 0;

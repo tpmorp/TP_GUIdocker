@@ -14,6 +14,7 @@
 #include "host.h"
 #include "host_ops.h"
 #include "layout_file.h"
+#include "menu_find.h"
 #include "settings.h"
 #include "overlay.h"
 #include "prompt.h"
@@ -1111,17 +1112,10 @@ static void collect_explorer_commands() {
 	g_explorer_cmds.clear();
 	HMENU bar = GetMenu(g_main);
 	if (!bar) return;
-	auto find_sub = [](HMENU m, const wchar_t* name) -> HMENU {
-		int n = GetMenuItemCount(m);
-		for (int i = 0; i < n; i++) {
-			wchar_t buf[256] = {};
-			GetMenuStringW(m, i, buf, 256, MF_BYPOSITION);
-			if (wcscmp(buf, name) == 0) return GetSubMenu(m, i);
-		}
-		return nullptr;
-	};
-	HMENU view = find_sub(bar, L"表示");
-	HMENU ex = view ? find_sub(view, L"メディアエクスプローラー") : nullptr;
+	// 他のプラグインが「表示」の文字や構成を変えていても見つける (menu_find.cpp)
+	HMENU view = find_view_menu(bar);
+	int pos = find_menu_item(view, L"メディアエクスプローラー");
+	HMENU ex = pos >= 0 ? GetSubMenu(view, pos) : nullptr;
 	if (!ex) return;
 	int n = GetMenuItemCount(ex);
 	for (int i = 0; i < n; i++) {

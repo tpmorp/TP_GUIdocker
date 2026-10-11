@@ -2,6 +2,7 @@
 //	本体 (AviUtl2) との窓・メニュー・データフォルダのやり取り
 //----------------------------------------------------------------------------------
 #include "host.h"
+#include "menu_find.h"
 
 namespace tpgd {
 
@@ -42,33 +43,29 @@ std::vector<HWND> find_floating_panels(HWND main) {
 	return ctx.list;
 }
 
-static std::wstring menu_text(HMENU menu, int pos) {
-	wchar_t buf[256] = {};
-	GetMenuStringW(menu, pos, buf, 256, MF_BYPOSITION);
-	std::wstring s = buf;
-	auto tab = s.find(L'\t');
-	if (tab != std::wstring::npos) s.resize(tab);
-	return s;
-}
-
 UINT find_menu_command(HWND main, const std::vector<std::wstring>& path) {
-	HMENU menu = GetMenu(main);
-	if (!menu || path.empty()) return 0;
-	for (size_t depth = 0; depth < path.size(); depth++) {
-		int n = GetMenuItemCount(menu);
-		int found = -1;
-		for (int i = 0; i < n; i++) {
-			if (menu_text(menu, i) == path[depth]) { found = i; break; }
-		}
-		if (found < 0) return 0;
-		if (depth == path.size() - 1) {
-			UINT id = GetMenuItemID(menu, found);
-			return id == (UINT)-1 ? 0 : id;
-		}
-		menu = GetSubMenu(menu, found);
-		if (!menu) return 0;
+	HMENU bar = main ? GetMenu(main) : nullptr;
+	if (!bar || path.empty()) {
+		if (!bar) log(L"メニューの探索: 本体のメニューバーが無い");
+		return 0;
 	}
-	return 0;
+	std::wstring how;
+	UINT cmd = find_host_command(bar, path, &how);
+	std::wstring joined;
+	for (auto& p : path) joined += (joined.empty() ? L"" : L" → ") + p;
+	if (cmd && how != L"道筋") {
+		// 他のプラグインがメニューの文字や構成を変えている環境 (決め打ちの道筋では見つからない)
+		log(L"メニューの探索: 「" + joined + L"」を" + how + L"から見つけた");
+	}
+	if (!cmd && find_layout_menu(bar) == nullptr) {
+		// レイアウトのメニュー自体が見つからない: 原因を調べられるよう、メニューの構成を1回だけ記録に残す
+		static bool dumped = false;
+		if (!dumped) {
+			dumped = true;
+			log(L"メニューの探索: 「" + joined + L"」が見つからない。メニューの構成:\n" + dump_menu(bar, 3));
+		}
+	}
+	return cmd;
 }
 
 bool apply_host_layout(HWND main, const std::wstring& name) {
