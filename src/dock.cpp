@@ -1281,6 +1281,9 @@ static bool enter_dock(bool interactive) {
 
 	log(L"===== 有効化 =====");
 
+	// 0. 本体のメニューが使える状態か (他のプラグインの影響で、中身が後から作られる環境がある)
+	wait_host_menus_ready(g_main, 5000);
+
 	// 前回が異常終了 (自由分割中の印が残っている) なら、まず本体の配置を正常に戻す
 	if (g_settings.session_active) {
 		log(L"前回の異常終了を検知。先に本体の配置を戻す");

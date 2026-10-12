@@ -164,7 +164,7 @@ static void dump_level(HMENU menu, int level, int depth, std::wstring& out) {
 		}
 		out += L"[" + std::wstring(raw) + L"]";
 		if (mi.fType & MFT_OWNERDRAW) out += L" (自作描画)";
-		if (mi.hSubMenu) out += L" ▸";
+		if (mi.hSubMenu) out += GetMenuItemCount(mi.hSubMenu) > 0 ? L" ▸" : L" ▸ (空)";
 		else out += L" #" + std::to_wstring(mi.wID);
 		out += L"\n";
 		if (mi.hSubMenu && level + 1 < depth) dump_level(mi.hSubMenu, level + 1, depth, out);
