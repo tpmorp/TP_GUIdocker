@@ -7,9 +7,9 @@ AviUtl ExEdit2（AviUtl2）の画面を、After Effects のように自由に分
 
 
 ■ 動作を確認した環境
-  ・AviUtl ExEdit2 version 2.1.13
+  ・AviUtl ExEdit2 version 2.1.14
   ・Windows 11
-  これ以外の版の AviUtl2 では、初回に確認の画面が出ます。
+  2.1.x の範囲の更新では確認の画面は出ません（2.2 などの大きな更新の時だけ出ます）。
 
 
 ■ 導入のしかた（おすすめ: 手で置く方法）

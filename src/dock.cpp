@@ -1262,6 +1262,16 @@ static bool enter_dock(bool interactive) {
 	update_font();
 
 	// 本体の更新を検知したら、利用者に確認する (安全装置)
+	// 本体の版の数値は 2.1.14 → 2011400 の形。小さな更新 (2.1.13 → 2.1.14 のように末尾の番号だけが変わるもの) は
+	// 画面の仕組みへの影響が小さいため確認を出さずに引き継ぎ、2.1 → 2.2 のような大きな更新の時だけ確認する
+	auto major_minor = [](DWORD v) { return v / 10000; };
+	if (g_settings.verified_version != 0 && g_settings.verified_version != g_host_version &&
+		major_minor(g_settings.verified_version) == major_minor(g_host_version)) {
+		log(L"本体の小さな更新を検知 (" + std::to_wstring(g_settings.verified_version) + L" → " + std::to_wstring(g_host_version) +
+			L")。確認を出さずに引き継ぐ");
+		g_settings.verified_version = g_host_version;
+		g_settings.save();
+	}
 	if (g_settings.verified_version != g_host_version) {
 		wchar_t msg[1024];
 		if (g_settings.verified_version == 0) {
