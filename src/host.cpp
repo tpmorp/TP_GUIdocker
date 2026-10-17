@@ -43,51 +43,9 @@ std::vector<HWND> find_floating_panels(HWND main) {
 	return ctx.list;
 }
 
-void prime_host_menus(HWND main) {
+bool host_menus_ready(HWND main) {
 	HMENU bar = main ? GetMenu(main) : nullptr;
-	if (!bar) return;
-	int n = GetMenuItemCount(bar);
-	for (int i = 0; i < n; i++) {
-		HMENU sub = GetSubMenu(bar, i);
-		if (!sub) continue;
-		SendMessageW(main, WM_INITMENUPOPUP, (WPARAM)sub, MAKELPARAM(i, FALSE));
-		// 2段目 (「表示」→「レイアウト」等) も同様に
-		int m = GetMenuItemCount(sub);
-		for (int j = 0; j < m; j++) {
-			if (HMENU sub2 = GetSubMenu(sub, j)) SendMessageW(main, WM_INITMENUPOPUP, (WPARAM)sub2, MAKELPARAM(j, FALSE));
-		}
-	}
-}
-
-bool wait_host_menus_ready(HWND main, int wait_ms) {
-	DWORD start = GetTickCount();
-	for (int round = 0;; round++) {
-		HMENU bar = main ? GetMenu(main) : nullptr;
-		if (bar && find_layout_menu(bar)) {
-			if (round > 0) log(L"メニューの準備: 中身を作らせて使えるようになった (" + std::to_wstring(round) + L" 回目)");
-			return true;
-		}
-		if (GetTickCount() - start > (DWORD)wait_ms) break;
-		if (round == 0) log(L"メニューの準備: 「レイアウト」メニューがまだ無いため、中身を作らせて待つ");
-		prime_host_menus(main);
-		// 本体が後から作る場合に備え、少し待つ (その間も画面の処理は進める)
-		DWORD until = GetTickCount() + 250;
-		while (GetTickCount() < until) {
-			MSG m;
-			while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
-				if (m.message == WM_QUIT) {
-					// 本体の終了の知らせは本体のメッセージループへ返す
-					PostQuitMessage((int)m.wParam);
-					return false;
-				}
-				TranslateMessage(&m);
-				DispatchMessageW(&m);
-			}
-			Sleep(20);
-		}
-	}
-	log(L"メニューの準備: 待っても「レイアウト」メニューが使えるようにならなかった");
-	return false;
+	return bar && find_layout_menu(bar) != nullptr;
 }
 
 UINT find_menu_command(HWND main, const std::vector<std::wstring>& path) {
@@ -98,16 +56,6 @@ UINT find_menu_command(HWND main, const std::vector<std::wstring>& path) {
 	}
 	std::wstring how;
 	UINT cmd = find_host_command(bar, path, &how);
-	if (!cmd && find_layout_menu(bar) == nullptr) {
-		// メニューの中身がまだ作られていない場合がある (開いた時に作る作り)。作らせてから探し直す
-		prime_host_menus(main);
-		bar = GetMenu(main);
-		cmd = bar ? find_host_command(bar, path, &how) : 0;
-		if (cmd) {
-			log(L"メニューの探索: 中身を作らせてから見つけた");
-		}
-		if (!bar) return 0;
-	}
 	std::wstring joined;
 	for (auto& p : path) joined += (joined.empty() ? L"" : L" → ") + p;
 	if (cmd && how != L"道筋") {

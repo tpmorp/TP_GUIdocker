@@ -111,6 +111,7 @@ static bool g_active = false;
 static bool g_busy = false;            // 開始・終了の処理中 (重複実行を防ぐ)
 static bool g_moving = false;          // 自分で位置を変えている最中
 static int g_startup_tries = 0;
+static int g_menu_wait_tries = 0;   // 起動時の有効化で、本体のメニューの中身を待った回数
 static bool g_cover = false;           // 起動時の「準備中」の覆いを表示中
 
 static std::vector<Panel> g_panels;
@@ -1291,9 +1292,6 @@ static bool enter_dock(bool interactive) {
 
 	log(L"===== 有効化 =====");
 
-	// 0. 本体のメニューが使える状態か (他のプラグインの影響で、中身が後から作られる環境がある)
-	wait_host_menus_ready(g_main, 5000);
-
 	// 前回が異常終了 (自由分割中の印が残っている) なら、まず本体の配置を正常に戻す
 	if (g_settings.session_active) {
 		log(L"前回の異常終了を検知。先に本体の配置を戻す");
@@ -2410,7 +2408,23 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 					SetTimer(hwnd, TIMER_STARTUP_ENTER, 300, nullptr);
 				}
 			} else if (wp == TIMER_STARTUP_ENTER) {
+				// 本体のメニューの中身ができるのを待つ (環境によっては、利用者がメニューを開くまで空のまま)
+				if (!host_menus_ready(g_main)) {
+					if (++g_menu_wait_tries == 1) log(L"起動時の有効化: 本体のメニューの中身がまだ無いため待つ");
+					if (g_menu_wait_tries < 10) return 0;   // 300ms ごと、約3秒まで
+					KillTimer(hwnd, TIMER_STARTUP_ENTER);
+					g_menu_wait_tries = 0;
+					// 失敗の知らせは出さず、通常の画面のまま使えるようにする。
+					// 次回の起動でも引き継ぐよう resume はそのまま残す。メニューを開けば中身ができるので、
+					// 利用者は「TP_GUIdockerを有効化」で有効化できる
+					log(L"起動時の有効化を見送る: 本体のメニューの中身が作られていない (メニューを開いた後の「有効化」で有効化できる)");
+					hide_cover();
+					update_toggle_menu();
+					return 0;
+				}
 				KillTimer(hwnd, TIMER_STARTUP_ENTER);
+				if (g_menu_wait_tries > 0) log(L"起動時の有効化: 本体のメニューの中身ができた");
+				g_menu_wait_tries = 0;
 				log(L"前回の状態を引き継いで有効化 (resume=" + std::to_wstring(g_settings.resume) +
 					L" session_active=" + std::to_wstring(g_settings.session_active) + L")");
 				enter_dock(true);

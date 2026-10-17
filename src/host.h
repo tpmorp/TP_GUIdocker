@@ -20,13 +20,10 @@ std::vector<HWND> find_floating_panels(HWND main);
 // ※ 項目番号は導入プラグイン数で変わるため、必ず名前で探す
 UINT find_menu_command(HWND main, const std::vector<std::wstring>& path);
 
-// 本体のメニューの中身を作らせる (メニューを開いた時と同じ知らせを送る)。
-// 本体や他のプラグインがメニューの中身を開く時まで作らない場合に、探す前に使う
-void prime_host_menus(HWND main);
-
 // 本体の「レイアウト」メニュー (「レイアウトを作成」を含むもの) が使える状態か。
-// 無ければ中身を作らせて、wait_ms まで待つ
-bool wait_host_menus_ready(HWND main, int wait_ms);
+// ※ 環境によっては、起動直後のメニューの中身が空で、利用者がメニューを一度開くまで作られない
+//   (0.4.10 で、メニューを開いた時の知らせを人工的に送って作らせようとしたところ、本体が落ちた。送ってはならない)
+bool host_menus_ready(HWND main);
 
 // 本体のレイアウトを名前で適用する (成功時 true)
 bool apply_host_layout(HWND main, const std::wstring& name);
