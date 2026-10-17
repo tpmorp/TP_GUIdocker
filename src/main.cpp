@@ -4,6 +4,7 @@
 //----------------------------------------------------------------------------------
 #include "common.h"
 #include "dock.h"
+#include "dev_probe.h"
 #include "hooks.h"
 #include "settings.h"
 #include "ui_spec.h"
@@ -74,6 +75,7 @@ static void register_workspace_menus(HOST_APP_TABLE* host) {
 EXTERN_C __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
 #ifdef TPGD_DEV
 	log(L"===== 起動 version " TPGD_VERSION L" 開発版 (本体 " + std::to_wstring(g_host_version) + L") =====");
+	dev_log_uptime(L"プラグインの読み込み");
 #else
 	log(L"===== 起動 version " TPGD_VERSION L" (本体 " + std::to_wstring(g_host_version) + L") =====");
 #endif

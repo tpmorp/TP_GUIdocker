@@ -59,6 +59,9 @@ static BOOL track_popup_common(HMENU menu, UINT flags, int x, int y, HWND hwnd, 
 
 	std::wstring text;
 	find_menu_text(menu, cmd, text);
+#ifdef TPGD_DEV
+	log(L"[調査] 取り込み中のパネルの右クリックで選択: " + text);
+#endif
 	if (text.find(L"ウィンドウを統合") != std::wstring::npos) {
 		log(L"取り込み中パネルの「ウィンドウを統合」を阻止");
 		return wants_cmd ? 0 : TRUE;

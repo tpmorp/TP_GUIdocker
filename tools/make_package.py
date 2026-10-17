@@ -43,8 +43,10 @@ def main():
     if r.returncode != 0 or not AUX2.exists():
         sys.stdout.buffer.write(r.stdout + r.stderr)
         sys.exit("配布版のビルドに失敗した")
-    if AUX2.read_bytes().find("見本を書き出す".encode("utf-16-le")) >= 0:
-        sys.exit("配布版に開発用の項目が残っている")
+    data = AUX2.read_bytes()
+    for word in ("見本を書き出す", "[調査]", "[実験]", "[計測]"):
+        if data.find(word.encode("utf-16-le")) >= 0:
+            sys.exit(f"配布版に開発用の項目が残っている: {word}")
     fonts = sorted(p for p in FONTS.iterdir() if p.is_file())
     if not any(p.suffix.lower() in (".ttf", ".otf", ".ttc") for p in fonts):
         sys.exit(f"{FONTS} に書体が無い")

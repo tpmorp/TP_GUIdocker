@@ -15,6 +15,7 @@
 #include "host_ops.h"
 #include "layout_file.h"
 #include "menu_find.h"
+#include "dev_probe.h"
 #include "settings.h"
 #include "overlay.h"
 #include "prompt.h"
@@ -570,6 +571,11 @@ static LRESULT CALLBACK panel_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPAR
 				}
 			}
 			break;
+#ifdef TPGD_DEV
+		case WM_DROPFILES:
+			log(L"[調査] 取り込み中のパネルにファイルがドロップされた: " + window_text(hwnd));
+			break;
+#endif
 		case WM_SHOWWINDOW:
 			// 本体による表示・非表示 (「ウィンドウを閉じる」や「表示」メニュー) を反映する
 			if (g_container) PostMessageW(g_container, WM_APP_RELAYOUT, 0, 0);
@@ -1128,6 +1134,7 @@ static void collect_explorer_commands() {
 // 開始の途中で失敗した場合の後始末
 static void abort_enter(const std::wstring& reason, bool interactive) {
 	log(L"有効化を中止: " + reason);
+	dev_cloak_end();
 	if (g_active) {
 		KillTimer(g_container, TIMER_WATCH);
 		release_all_panels();
@@ -1175,6 +1182,11 @@ static bool build_and_capture(bool interactive) {
 	MONITORINFO mi = { sizeof(mi) };
 	if (GetMonitorInfoW(MonitorFromWindow(g_main, MONITOR_DEFAULTTOPRIMARY), &mi)) work = mi.rcWork;
 	POINT origin = { work.left + scaled(40), work.top + scaled(40) };
+	if (dev_flag(L"offscreen")) {
+		// [実験] 画面外で切り離す (本体が画面外の座標を受け付けるか)
+		origin = { GetSystemMetrics(SM_XVIRTUALSCREEN) - 20000, GetSystemMetrics(SM_YVIRTUALSCREEN) - 20000 };
+		log(L"[実験] 画面外で切り離す: 仮位置の起点 " + std::to_wstring(origin.x) + L"," + std::to_wstring(origin.y));
+	}
 	DockLayoutPlan plan = build_dock_layout(base, is_visible, origin, scaled(ui::FLOAT_W), scaled(ui::FLOAT_H));
 	if (!plan.doc.save(layout_path(DOCK_LAYOUT))) {
 		abort_enter(ui::REASON_WRITE, interactive);
@@ -1188,6 +1200,7 @@ static bool build_and_capture(bool interactive) {
 	g_settings.save();
 
 	// 2. 適用する (本体のエラー表示を監視)
+	dev_cloak_begin(g_main);
 	ApplyResult applied = host_apply_layout(g_main, g_container, DOCK_LAYOUT);
 	if (!applied.ok()) {
 		abort_enter(applied.in_menu ? ui::REASON_LOAD_FAILED : ui::REASON_NOT_IN_MENU, interactive);
@@ -1221,6 +1234,7 @@ static bool build_and_capture(bool interactive) {
 	attach_container();
 	for (auto& [key, h] : found) {
 		if (find_leaf_with(g_root.get(), key)) {
+			dev_cloak_release(h);
 			if (!capture_panel(h, key)) {
 				abort_enter(format_s(ui::REASON_CAPTURE, key), interactive);
 				return false;
@@ -1240,6 +1254,8 @@ static bool build_and_capture(bool interactive) {
 	relayout();
 	save_tree();
 	SetTimer(g_container, TIMER_WATCH, 300, nullptr);
+	UpdateWindow(g_container);
+	dev_cloak_end();
 	log(L"帯の高さ=" + std::to_wstring(tab_height()) + L" (メニューバー=" + std::to_wstring(menu_bar_height()) + L") 境界線=" + std::to_wstring(gap_size()));
 	log(L"有効化した (取り込み " + std::to_wstring(g_panels.size()) + L" 枚, 浮いた窓 " + std::to_wstring(g_floats.size()) + L" 枚)");
 	return true;
@@ -1334,6 +1350,7 @@ static void exit_dock(bool apply_return) {
 	if (!g_active) return;
 	BusyGuard busy;
 	log(L"===== 無効化 =====");
+	if (apply_return) dev_cloak_begin(g_main);
 	end_drag(false);
 	KillTimer(g_container, TIMER_WATCH);
 	save_tree();
@@ -1343,6 +1360,7 @@ static void exit_dock(bool apply_return) {
 	clear_floats();
 
 	release_all_panels();
+	dev_cloak_refresh();
 	detach_container();
 	g_active = false;
 	g_drag = nullptr;
@@ -1350,6 +1368,7 @@ static void exit_dock(bool apply_return) {
 	if (apply_return && !restore_host_layout()) {
 		log(L"標準の画面へ戻す際に本体がエラーを出した");
 	}
+	dev_cloak_end();
 	g_settings.session_active = false;
 	g_settings.save();
 }
@@ -2013,6 +2032,13 @@ static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 			organize_menu();
 			break;
 		case WM_COMMAND:
+#ifdef TPGD_DEV
+			// [調査] 有効中に本体のメニューで選ばれた項目
+			if (g_active && HIWORD(wp) == 0 && lp == 0) {
+				std::wstring t = dev_menu_text(GetMenu(hwnd), LOWORD(wp));
+				if (!t.empty()) log(L"[調査] 有効中にメニューで選択: " + t);
+			}
+#endif
 			// メディアエクスプローラーは切り離せない (本体の仕様) ため、自由分割中は開かせない
 			if (g_active && HIWORD(wp) == 0 && g_explorer_cmds.count(LOWORD(wp))) {
 				notify(ui::EXPLORER_NOTICE, MB_ICONINFORMATION);
@@ -2394,6 +2420,7 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 					return 0;
 				}
 				g_main = main;
+				dev_log_uptime(L"本体の窓が表示された");
 				subclass_main();
 				organize_menu();
 				update_toggle_menu();
@@ -2428,6 +2455,7 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				log(L"前回の状態を引き継いで有効化 (resume=" + std::to_wstring(g_settings.resume) +
 					L" session_active=" + std::to_wstring(g_settings.session_active) + L")");
 				enter_dock(true);
+				dev_log_uptime(L"起動時の有効化を終えた");
 				hide_cover();
 				update_toggle_menu();
 				update_lock_menu();
