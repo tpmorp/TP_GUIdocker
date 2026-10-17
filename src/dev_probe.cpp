@@ -57,9 +57,11 @@ static void CALLBACK on_win_event(HWINEVENTHOOK, DWORD, HWND h, LONG id_object, 
 }
 
 void dev_cloak_begin(HWND main) {
-	if (!dev_flag(L"cloak") || g_hook) return;
+	int mode = dev_flag(L"cloak");
+	if (!mode || g_hook) return;
 	g_cloak_main = main;
-	set_cloak(main, true);
+	// cloak=1: 本体の窓も描かせない / cloak=2: 本体の窓は出したまま (覆いで隠す)、切り離し窓だけ描かせない
+	if (mode == 1) set_cloak(main, true);
 	// 既に出ている切り離し窓も描かせない
 	for (HWND h : find_floating_panels(main)) set_cloak(h, true);
 	// これから現れる窓は、作られた・表示された瞬間に描かせない (同じスレッドの中で即座に呼ばれる形)
