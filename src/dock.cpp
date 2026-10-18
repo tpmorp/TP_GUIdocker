@@ -1003,7 +1003,10 @@ static void close_panel(const std::wstring& key) {
 			SendMessageW(g_main, WM_COMMAND, MAKEWPARAM(cmd, 0), 0);
 			log(L"閉じた: " + key);
 		} else {
-			log(L"「表示」メニューに項目が無いため閉じられない: " + key);
+			// 窓の題名と「表示」メニューの項目名が違うパネル (例: シーン再生の窓の題名はシーン名) は、
+			// 窓そのものに「閉じる」を送る (切り離した窓の × と同じ。区画からの除去は監視で行う)
+			log(L"「表示」メニューに項目が無いため、窓に閉じる指示を送る: " + key);
+			PostMessageW(p.hwnd, WM_SYSCOMMAND, SC_CLOSE, 0);
 		}
 		return;
 	}
