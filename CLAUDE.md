@@ -31,6 +31,7 @@ py -3 tools\make_package.py          :: 配布用 → dist\out\TP_GUIdocker_<版
 - ビルドには Visual Studio 2026 Build Tools（`vcvars64.bat` のパスは build.bat に直書き）が必要。Git Bash から .bat を呼ぶと失敗するため PowerShell から `cmd /c` で実行する。
 - 単体テストは1本の実行ファイル。引数（本番の basic.layout と aviutl2.ini）を省くと、ファイルを使う試験は飛ばされる。
 - 実機確認は AviUtl2 上でのみ可能（自動試験は無い）。
+- リポジトリ（tpmorp/TP_GUIdocker）は公開。配布は GitHub の Releases に `make_package.py` の zip を載せる（`git tag -a v<版>` → `gh release create v<版> dist\out\TP_GUIdocker_<版>.au2pkg.zip --prerelease`）。コミットの作成者メールは GitHub の非公開用アドレス（リポジトリの `user.email` に設定済み）を使い、個人のメールやパソコンのユーザー名を含むパスをファイルに書かない。
 - 開発段階でだけ使う項目（「指示用」メニュー・見本の書き出し・診断の後始末など）は `#ifdef TPGD_DEV` で囲み、配布版に含めない。新しく開発用の項目を足す時も同様にする。`make_package.py` は配布版を毎回ビルドし直し、開発用の文言が残っていれば止まる。
 
 ## 構成の要点
