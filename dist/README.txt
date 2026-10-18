@@ -60,6 +60,8 @@ AviUtl ExEdit2（AviUtl2）の画面を、After Effects のように自由に分
 
 
 ■ 感想・不具合の報告のお願い
+  報告先: https://github.com/tpmorp/TP_GUIdocker/issues
+  （最新版もここの Releases から入手できます）
   次の点を教えてください（分かる範囲で構いません）。
   1. 使いやすかった点・便利だった点
   2. 分かりにくかった操作、思った通りに動かなかった操作
