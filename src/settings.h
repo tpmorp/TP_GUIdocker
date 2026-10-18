@@ -34,6 +34,7 @@ struct Settings {
 	bool resume = false;           // 前回、有効のまま終了したか (起動時に引き継ぐ)
 	bool session_active = false;   // 有効中か (正常に終了できなかった場合に 1 が残る)
 	DWORD verified_version = 0;    // 利用者が有効化を認めた本体バージョン
+	bool return_saved_clean = false;  // 終了時に元の配置へ戻し終え、本体がその状態を保存した (次の起動で元の配置の保存を省ける)
 
 	// [Settings]
 	std::wstring return_layout;    // 無効時のレイアウト (空なら自動保存したもの)
@@ -47,6 +48,10 @@ struct Settings {
 	// ワークスペース ([Workspaces] と [Workspace.N])
 	std::vector<Workspace> workspaces;
 	int active_ws = 0;
+
+	// [Return] パネルが区画から外れた時に同じ区画にいた仲間 (セクション名 → 仲間のセクション名)。
+	// 再び開かれた・統合を選ばれた時に、仲間のいる区画へ戻すために使う
+	std::map<std::wstring, std::vector<std::wstring>> return_mates;
 
 	// 使用中のワークスペースの、使用中の配置 (workspaces[active_ws].work_* と同じもの)
 	std::wstring tree;

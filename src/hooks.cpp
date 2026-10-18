@@ -51,7 +51,9 @@ template <class F>
 static BOOL track_popup_common(HMENU menu, UINT flags, int x, int y, HWND hwnd, F call_orig) {
 	POINT pt = { x, y };
 	bool on_panel = dock_is_captured(hwnd) || dock_is_captured(WindowFromPoint(pt));
-	if (!on_panel) return call_orig(flags);
+	HWND on_float = on_panel ? nullptr : dock_floating_of(WindowFromPoint(pt));
+	if (!on_float) on_float = on_panel ? nullptr : dock_floating_of(hwnd);
+	if (!on_panel && !on_float) return call_orig(flags);
 
 	bool wants_cmd = (flags & TPM_RETURNCMD) != 0;
 	UINT cmd = (UINT)call_orig(flags | TPM_RETURNCMD);
@@ -63,7 +65,12 @@ static BOOL track_popup_common(HMENU menu, UINT flags, int x, int y, HWND hwnd, 
 	log(L"[調査] 取り込み中のパネルの右クリックで選択: " + text);
 #endif
 	if (text.find(L"ウィンドウを統合") != std::wstring::npos) {
-		log(L"取り込み中パネルの「ウィンドウを統合」を阻止");
+		if (on_float) {
+			// 浮いた窓: 本体へ統合させると TP_GUIdocker の画面の裏に隠れるため、区画へ入れる操作に置き換える
+			dock_request_dock_return(on_float);
+		} else {
+			log(L"取り込み中パネルの「ウィンドウを統合」を阻止");
+		}
 		return wants_cmd ? 0 : TRUE;
 	}
 	if (wants_cmd) return (BOOL)cmd;

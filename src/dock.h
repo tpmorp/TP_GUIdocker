@@ -45,4 +45,10 @@ void dock_shutdown();
 // h が取り込み中パネル (またはその子孫) か
 bool dock_is_captured(HWND h);
 
+// h を含む浮いた窓 (TP_GUIdocker が管理する、区画の外に浮いたパネル)。無ければ nullptr
+HWND dock_floating_of(HWND h);
+
+// 浮いた窓を前にいた区画 (無ければ一番大きい区画) へ入れる
+void dock_request_dock_return(HWND h);
+
 } // namespace tpgd

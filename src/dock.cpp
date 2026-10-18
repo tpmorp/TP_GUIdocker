@@ -16,6 +16,7 @@
 #include "layout_file.h"
 #include "menu_find.h"
 #include "dev_probe.h"
+#include "cloak.h"
 #include "settings.h"
 #include "overlay.h"
 #include "prompt.h"
@@ -54,6 +55,7 @@ enum : UINT {
 	WM_APP_RELAYOUT,
 	WM_APP_TOGGLE_DROP_STYLE,
 	WM_APP_DOCK_FLOAT,        // 浮いた窓を区画へ入れる (移動の操作が終わってから行う)
+	WM_APP_DOCK_RETURN,       // 浮いた窓を前にいた区画 (無ければ一番大きい区画) へ入れる (wParam: 浮いた窓)
 	WM_APP_WS_SWITCH,         // ワークスペースの切り替え (wParam: 番号)
 	WM_APP_MAXIMIZE,          // カーソルの下のパネルを最大化・元に戻す
 	WM_APP_TOGGLE_LOCK,       // レイアウトのロックの切り替え
@@ -113,10 +115,14 @@ static bool g_busy = false;            // 開始・終了の処理中 (重複実
 static bool g_moving = false;          // 自分で位置を変えている最中
 static int g_startup_tries = 0;
 static int g_menu_wait_tries = 0;   // 起動時の有効化で、本体のメニューの中身を待った回数
-static bool g_cover = false;           // 起動時の「準備中」の覆いを表示中
+static bool g_cover = false;           // 覆い (「有効化しています…」等) を表示中
+static void position_cover();
+static bool g_startup_enter = false;   // 起動時の自動の有効化の最中
+static bool g_closing = false;         // 本体の終了に伴う無効化の最中
 
 static std::vector<Panel> g_panels;
 static std::vector<FloatPanel> g_floats;
+static std::map<std::wstring, std::wstring> g_titles;   // セクション名 → 窓の題名 (この起動中に見たもの。「表示」メニューで開閉するために使う)
 static std::unique_ptr<Node> g_root;
 static std::vector<TabHit> g_tab_hits;
 static std::vector<LayoutSlot> g_slots;   // 照合用の仮位置
@@ -311,6 +317,18 @@ bool dock_is_captured(HWND h) {
 	return false;
 }
 
+HWND dock_floating_of(HWND h) {
+	for (; h; h = GetAncestor(h, GA_PARENT)) {
+		if (find_float(h)) return h;
+		if (h == GetDesktopWindow()) break;
+	}
+	return nullptr;
+}
+
+void dock_request_dock_return(HWND h) {
+	if (g_container) PostMessageW(g_container, WM_APP_DOCK_RETURN, (WPARAM)h, 0);
+}
+
 static bool is_present(const std::wstring& key) {
 	for (auto& p : g_panels) if (p.key == key && IsWindowVisible(p.hwnd)) return true;
 	return false;
@@ -439,6 +457,7 @@ static void position_container() {
 	GetClientRect(g_main, &rc);
 	rc.bottom = std::max(rc.top, rc.bottom - footer_height());
 	SetWindowPos(g_container, HWND_TOP, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, SWP_NOACTIVATE);
+	position_cover();   // 覆いを出している間は、入れ物より手前に保つ
 }
 
 static void relayout() {
@@ -629,6 +648,7 @@ static bool capture_panel(HWND h, const std::wstring& key) {
 	if (Node* leaf = find_leaf_with(g_root.get(), key)) {
 		if (leaf->active.empty()) leaf->active = key;
 	}
+	if (!p.title.empty()) g_titles[key] = p.title;
 	log(L"取り込み " + key + L" '" + p.title + L"'");
 	return true;
 }
@@ -670,21 +690,61 @@ static void detach_container() {
 	SetWindowLongPtrW(g_container, GWL_STYLE, WS_POPUP | WS_CLIPCHILDREN);
 }
 
-// 起動時、自由分割の準備が整うまで本体の通常の画面を覆い隠す
-static void show_cover() {
-	if (g_active || g_cover) return;
+// 覆い: 有効化・無効化・終了・配置の作り直しの間、本体の画面 (メニューバーとフッターの間) を隠す。
+// 入れ物とは別の子窓にし、入れ物や取り込んだパネルより手前に置く
+#define COVER_CLASS TPGD_NAME L"Cover"
+static HWND g_cover_wnd = nullptr;
+static const wchar_t* g_cover_text = ui::COVER;
+
+static LRESULT CALLBACK cover_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+	switch (msg) {
+		case WM_ERASEBKGND:
+			return 1;
+		case WM_PAINT: {
+			PAINTSTRUCT ps;
+			HDC dc = BeginPaint(hwnd, &ps);
+			RECT rc;
+			GetClientRect(hwnd, &rc);
+			HBRUSH b = CreateSolidBrush(style_color("Background", RGB(0x20, 0x20, 0x20)));
+			FillRect(dc, &rc, b);
+			DeleteObject(b);
+			HGDIOBJ old = SelectObject(dc, g_font);
+			SetBkMode(dc, TRANSPARENT);
+			SetTextColor(dc, style_color("TextDisable", RGB(0x90, 0x90, 0x90)));
+			DrawTextW(dc, g_cover_text, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+			SelectObject(dc, old);
+			EndPaint(hwnd, &ps);
+			return 0;
+		}
+	}
+	return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+static void position_cover() {
+	if (!g_cover_wnd || !g_main || !g_cover) return;
+	RECT rc;
+	GetClientRect(g_main, &rc);
+	rc.bottom = std::max(rc.top, rc.bottom - footer_height());
+	SetWindowPos(g_cover_wnd, HWND_TOP, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+}
+
+static void show_cover(const wchar_t* text = ui::COVER) {
+	if (!g_main || !g_cover_wnd) return;
+	g_cover_text = text;
 	g_cover = true;
-	attach_container();
-	InvalidateRect(g_container, nullptr, TRUE);
-	UpdateWindow(g_container);
+	if (GetParent(g_cover_wnd) != g_main) {
+		SetWindowLongPtrW(g_cover_wnd, GWL_STYLE, WS_CHILD | WS_CLIPSIBLINGS);
+		SetParent(g_cover_wnd, g_main);
+	}
+	position_cover();
+	InvalidateRect(g_cover_wnd, nullptr, TRUE);
+	UpdateWindow(g_cover_wnd);
 }
 
 static void hide_cover() {
 	if (!g_cover) return;
 	g_cover = false;
-	// 自由分割に入れていれば入れ物はそのまま使う。入れなかった場合は外す
-	if (!g_active) detach_container();
-	else InvalidateRect(g_container, nullptr, TRUE);
+	if (g_cover_wnd) ShowWindow(g_cover_wnd, SW_HIDE);
 }
 
 //---------------------------------------------------------------------
@@ -711,6 +771,10 @@ static LRESULT CALLBACK float_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPAR
 static void add_float(HWND h, const std::wstring& key) {
 	if (find_float(h)) return;
 	g_floats.push_back({ h, key });
+	if (!key.empty()) {
+		std::wstring t = window_text(h);
+		if (!t.empty()) g_titles[key] = t;
+	}
 	SetWindowSubclass(h, float_subclass_proc, FLOAT_SUBCLASS_ID, 0);
 }
 
@@ -819,11 +883,75 @@ static void show_drop_overlay() {
 //---------------------------------------------------------------------
 
 // 取り込み中のパネルを区画から外し、浮いた窓にする (at が指定されれば、その位置へ)
+//---------------------------------------------------------------------
+//	前にいた区画の記憶 (閉じた・浮かせたパネルを、再び開いた時などに元の区画へ戻す)
+//	記憶の形: 先頭が置き方 (@C: 同じ区画にタブで / @L @R @T @B: 目印の区画のその側に分割して)、続いて目印のパネル名
+//---------------------------------------------------------------------
+
+static Node* find_parent(Node* n, const Node* child) {
+	if (!n || !n->is_split) return nullptr;
+	if (n->a.get() == child || n->b.get() == child) return n;
+	if (Node* f = find_parent(n->a.get(), child)) return f;
+	return find_parent(n->b.get(), child);
+}
+
+static void first_panels(Node* n, std::vector<std::wstring>& out) {
+	for_each_leaf(n, [&](Node* l) { for (auto& k : l->panels) out.push_back(k); });
+}
+
+// key が区画から外れる直前に呼ぶ
+static void remember_mates(const std::wstring& key) {
+	Node* leaf = find_leaf_with(g_root.get(), key);
+	if (!leaf || key.empty()) return;
+	std::vector<std::wstring> v;
+	for (auto& k : leaf->panels) if (k != key) v.push_back(k);
+	if (!v.empty()) {
+		v.insert(v.begin(), L"@C");
+	} else if (Node* parent = find_parent(g_root.get(), leaf)) {
+		// 1枚だけの区画: 隣の区画を目印に、その側へ分割して戻す
+		bool first = parent->a.get() == leaf;
+		Node* other = first ? parent->b.get() : parent->a.get();
+		first_panels(other, v);
+		if (v.empty()) return;
+		const wchar_t* side = parent->vertical ? (first ? L"@T" : L"@B") : (first ? L"@L" : L"@R");
+		v.insert(v.begin(), side);
+	} else {
+		return;
+	}
+	g_settings.return_mates[key] = v;
+}
+
+// 戻し先 (見つからなければ leaf は nullptr)
+static void return_target(const std::wstring& key, Node*& leaf, DropZone& zone) {
+	leaf = nullptr;
+	zone = DropZone::Center;
+	auto it = g_settings.return_mates.find(key);
+	if (it == g_settings.return_mates.end() || it->second.size() < 2) return;
+	const std::wstring& how = it->second[0];
+	zone = how == L"@L" ? DropZone::Left : how == L"@R" ? DropZone::Right :
+		how == L"@T" ? DropZone::Top : how == L"@B" ? DropZone::Bottom : DropZone::Center;
+	for (size_t i = 1; i < it->second.size() && !leaf; i++) {
+		const std::wstring& mate = it->second[i];
+		if (mate != key && is_present(mate)) leaf = find_leaf_with(g_root.get(), mate);
+	}
+}
+
+static Node* largest_leaf() {
+	Node* best = nullptr;
+	long area = -1;
+	for_each_leaf(g_root.get(), [&](Node* l) {
+		long a = (l->rect.right - l->rect.left) * (l->rect.bottom - l->rect.top);
+		if (a > area) { area = a; best = l; }
+	});
+	return best;
+}
+
 static void float_panel(const std::wstring& key, const POINT* at) {
 	auto it = std::find_if(g_panels.begin(), g_panels.end(), [&](const Panel& p) { return p.key == key; });
 	if (it == g_panels.end()) return;
 	Panel p = *it;
 	g_panels.erase(it);
+	remember_mates(key);
 	remove_key(g_root.get(), key);
 	release_panel(p);
 	if (!IsWindowVisible(p.hwnd)) ShowWindow(p.hwnd, SW_SHOWNA);
@@ -1058,6 +1186,7 @@ static void watch() {
 		if (!IsWindow(it->hwnd) || GetParent(it->hwnd) != g_container) {
 			log(L"パネルが外部で移動・破棄された: " + it->key);
 			if (IsWindow(it->hwnd)) RemoveWindowSubclass(it->hwnd, panel_subclass_proc, PANEL_SUBCLASS_ID);
+			remember_mates(it->key);
 			remove_key(g_root.get(), it->key);
 			it = g_panels.erase(it);
 			changed = true;
@@ -1069,6 +1198,7 @@ static void watch() {
 			log(L"閉じられたパネルを区画から外す: " + it->key);
 			Panel p = *it;
 			it = g_panels.erase(it);
+			remember_mates(p.key);
 			remove_key(g_root.get(), p.key);
 			// 再び開かれた時に照合できるよう、照合用の仮位置へ戻しておく
 			for (auto& s : g_slots) {
@@ -1091,8 +1221,17 @@ static void watch() {
 		GetWindowRect(h, &r);
 		std::wstring key = match_slot(g_slots, { r.left, r.top });
 		add_float(h, key);
-		log(L"新しく開かれたパネルを浮いた窓で出す: " + (key.empty() ? L"(照合できず)" : key) + L" '" + window_text(h) + L"'");
-		if (!key.empty()) move_float_to_center(h);
+		// 前に区画にいたパネルは、その区画へ自動で戻す。記憶が無ければ、本体が出した位置のまま浮いた窓で置く
+		Node* leaf = nullptr;
+		DropZone zone = DropZone::Center;
+		if (!key.empty()) return_target(key, leaf, zone);
+		if (leaf && !g_settings.locked) {
+			log(L"新しく開かれたパネルを前の区画へ戻す: " + key);
+			dock_float(h, leaf, zone, -1);
+			changed = false;   // dock_float が並べ直しと保存を済ませている
+		} else {
+			log(L"新しく開かれたパネルを浮いた窓で出す: " + (key.empty() ? L"(照合できず)" : key) + L" '" + window_text(h) + L"'");
+		}
 	}
 
 	if (changed) {
@@ -1134,7 +1273,7 @@ static void collect_explorer_commands() {
 // 開始の途中で失敗した場合の後始末
 static void abort_enter(const std::wstring& reason, bool interactive) {
 	log(L"有効化を中止: " + reason);
-	dev_cloak_end();
+	cloak_end();
 	if (g_active) {
 		KillTimer(g_container, TIMER_WATCH);
 		release_all_panels();
@@ -1182,11 +1321,6 @@ static bool build_and_capture(bool interactive) {
 	MONITORINFO mi = { sizeof(mi) };
 	if (GetMonitorInfoW(MonitorFromWindow(g_main, MONITOR_DEFAULTTOPRIMARY), &mi)) work = mi.rcWork;
 	POINT origin = { work.left + scaled(40), work.top + scaled(40) };
-	if (dev_flag(L"offscreen")) {
-		// [実験] 画面外で切り離す (本体が画面外の座標を受け付けるか)
-		origin = { GetSystemMetrics(SM_XVIRTUALSCREEN) - 20000, GetSystemMetrics(SM_YVIRTUALSCREEN) - 20000 };
-		log(L"[実験] 画面外で切り離す: 仮位置の起点 " + std::to_wstring(origin.x) + L"," + std::to_wstring(origin.y));
-	}
 	DockLayoutPlan plan = build_dock_layout(base, is_visible, origin, scaled(ui::FLOAT_W), scaled(ui::FLOAT_H));
 	if (!plan.doc.save(layout_path(DOCK_LAYOUT))) {
 		abort_enter(ui::REASON_WRITE, interactive);
@@ -1200,7 +1334,7 @@ static bool build_and_capture(bool interactive) {
 	g_settings.save();
 
 	// 2. 適用する (本体のエラー表示を監視)
-	dev_cloak_begin(g_main);
+	cloak_begin(g_main);
 	ApplyResult applied = host_apply_layout(g_main, g_container, DOCK_LAYOUT);
 	if (!applied.ok()) {
 		abort_enter(applied.in_menu ? ui::REASON_LOAD_FAILED : ui::REASON_NOT_IN_MENU, interactive);
@@ -1234,7 +1368,7 @@ static bool build_and_capture(bool interactive) {
 	attach_container();
 	for (auto& [key, h] : found) {
 		if (find_leaf_with(g_root.get(), key)) {
-			dev_cloak_release(h);
+			cloak_release(h);
 			if (!capture_panel(h, key)) {
 				abort_enter(format_s(ui::REASON_CAPTURE, key), interactive);
 				return false;
@@ -1255,7 +1389,7 @@ static bool build_and_capture(bool interactive) {
 	save_tree();
 	SetTimer(g_container, TIMER_WATCH, 300, nullptr);
 	UpdateWindow(g_container);
-	dev_cloak_end();
+	cloak_end();
 	log(L"帯の高さ=" + std::to_wstring(tab_height()) + L" (メニューバー=" + std::to_wstring(menu_bar_height()) + L") 境界線=" + std::to_wstring(gap_size()));
 	log(L"有効化した (取り込み " + std::to_wstring(g_panels.size()) + L" 枚, 浮いた窓 " + std::to_wstring(g_floats.size()) + L" 枚)");
 	return true;
@@ -1307,6 +1441,9 @@ static bool enter_dock(bool interactive) {
 	}
 
 	log(L"===== 有効化 =====");
+	// 有効化の間は本体の画面を覆い、切り離される窓も描かせない (切り離しの直前から)
+	show_cover(ui::COVER);
+	struct CoverGuard { ~CoverGuard() { cloak_end(); hide_cover(); } } cover_guard;
 
 	// 前回が異常終了 (自由分割中の印が残っている) なら、まず本体の配置を正常に戻す
 	if (g_settings.session_active) {
@@ -1317,7 +1454,16 @@ static bool enter_dock(bool interactive) {
 	}
 
 	// 1. 現在の配置を本体自身に保存させる (戻り先)
-	if (!host_create_layout(g_main, g_container, AUTO_RETURN_LAYOUT)) {
+	// 起動時の自動の有効化で、前回の終了時に元の配置へ戻し終えていれば、本体は今その配置で起動しているため保存を省く
+	// (手動の有効化では、無効中に配置を変えている可能性があるため常に保存する)
+	bool skip_save = g_startup_enter && g_settings.return_saved_clean &&
+		GetFileAttributesW(layout_path(AUTO_RETURN_LAYOUT).c_str()) != INVALID_FILE_ATTRIBUTES &&
+		find_menu_command(g_main, { L"表示", L"レイアウト", AUTO_RETURN_LAYOUT }) != 0;
+	g_settings.return_saved_clean = false;
+	g_settings.save();
+	if (skip_save) {
+		log(L"元の配置の保存を省く (前回の終了時に戻した配置で起動しているため)");
+	} else if (!host_create_layout(g_main, g_container, AUTO_RETURN_LAYOUT)) {
 		abort_enter(ui::REASON_SAVE_CURRENT, interactive);
 		return false;
 	}
@@ -1350,7 +1496,8 @@ static void exit_dock(bool apply_return) {
 	if (!g_active) return;
 	BusyGuard busy;
 	log(L"===== 無効化 =====");
-	if (apply_return) dev_cloak_begin(g_main);
+	show_cover(ui::COVER_DISABLE);
+	if (apply_return) cloak_begin(g_main);
 	end_drag(false);
 	KillTimer(g_container, TIMER_WATCH);
 	save_tree();
@@ -1360,16 +1507,24 @@ static void exit_dock(bool apply_return) {
 	clear_floats();
 
 	release_all_panels();
-	dev_cloak_refresh();
+	cloak_refresh();
 	detach_container();
 	g_active = false;
 	g_drag = nullptr;
 
-	if (apply_return && !restore_host_layout()) {
-		log(L"標準の画面へ戻す際に本体がエラーを出した");
+	bool restored = false;
+	if (apply_return && g_closing && dev_flag(L"exit_noapply")) {
+		// [実験] 終了時に元の配置の適用を省き、本体が保存する内容を調べる (開発版のみ)
+		log(L"[実験] 終了時の元の配置の適用を省いた");
+	} else if (apply_return) {
+		restored = restore_host_layout();
+		if (!restored) log(L"標準の画面へ戻す際に本体がエラーを出した");
 	}
-	dev_cloak_end();
+	cloak_end();
+	hide_cover();
 	g_settings.session_active = false;
+	// 終了に伴って元の配置へ戻し終えた: 本体はこの状態を保存するので、次の起動では元の配置の保存を省ける
+	g_settings.return_saved_clean = g_closing && restored;
 	g_settings.save();
 }
 
@@ -1402,6 +1557,137 @@ static bool rebuild_from_settings() {
 	return build_and_capture(true);
 }
 
+// 「表示」メニューの項目でパネルを開閉する (open: 開く / 閉じる)。項目が無ければ false
+static bool toggle_panel_by_menu(const std::wstring& title, bool open) {
+	HMENU bar = GetMenu(g_main);
+	UINT cmd = find_menu_command(g_main, { L"表示", title });
+	if (!cmd || !bar) return false;
+	bool checked = (GetMenuState(bar, cmd, MF_BYCOMMAND) & MF_CHECKED) != 0;
+	if (checked != open) SendMessageW(g_main, WM_COMMAND, MAKEWPARAM(cmd, 0), 0);
+	return true;
+}
+
+// 照合用の仮位置へ戻す (閉じたパネルを後で開いた時に、どのパネルか照合できるように)
+static void move_to_slot(HWND h, const std::wstring& key) {
+	for (auto& sl : g_slots) {
+		if (sl.key != key) continue;
+		SetWindowPos(h, nullptr, sl.pt.x, sl.pt.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+		return;
+	}
+}
+
+// ワークスペースの切り替え: 今いるパネルを使い回して並べ替える (本体に切り離し直させない)。
+// 揃えられない場合は何も変えずに false を返す (呼び出し元が作り直しへ切り替える)
+static bool rearrange_from_settings() {
+	BusyGuard busy;
+	end_drag(false);
+	auto target = parse_tree(g_settings.tree);
+	if (!target) target = default_tree();
+	std::set<std::wstring> in_tree;
+	for_each_leaf(target.get(), [&](Node* l) { for (auto& k : l->panels) in_tree.insert(k); });
+	std::set<std::wstring> needed = in_tree;
+	for (auto& [k, r] : g_settings.floating) needed.insert(k);
+
+	std::map<std::wstring, HWND> have;
+	for (auto& p : g_panels) have[p.key] = p.hwnd;
+	for (auto& f : g_floats) if (!f.key.empty()) have[f.key] = f.hwnd;
+
+	// 1. 足りないパネルは、題名が分かっていなければ揃えられない
+	std::vector<std::wstring> missing;
+	for (auto& k : needed) {
+		if (have.count(k)) continue;
+		if (!g_titles.count(k)) {
+			log(L"並べ替えでは切り替えられない (題名が分からないパネル: " + k + L")");
+			return false;
+		}
+		missing.push_back(k);
+	}
+
+	cloak_begin(g_main);
+	struct CloakGuard { ~CloakGuard() { cloak_end(); } } cloak_guard;
+
+	// 2. 足りないパネルを「表示」メニューで開かせ、仮位置で照合する
+	for (auto& k : missing) {
+		if (!toggle_panel_by_menu(g_titles[k], true)) {
+			log(L"並べ替えでは切り替えられない (「表示」メニューに無い: " + k + L")");
+			return false;
+		}
+	}
+	if (!missing.empty()) {
+		for (HWND h : find_floating_panels(g_main)) {
+			if (find_panel(h) || find_float(h)) continue;
+			RECT r;
+			GetWindowRect(h, &r);
+			std::wstring key = match_slot(g_slots, { r.left, r.top });
+			if (!key.empty() && !have.count(key)) have[key] = h;
+		}
+		for (auto& k : missing) {
+			if (!have.count(k)) {
+				log(L"並べ替えでは切り替えられない (開いたパネルを照合できない: " + k + L")");
+				return false;
+			}
+		}
+	}
+
+	// 3. 使わないパネルを閉じる (仮位置へ戻してから)
+	for (auto it = g_panels.begin(); it != g_panels.end();) {
+		if (needed.count(it->key)) { ++it; continue; }
+		Panel p = *it;
+		it = g_panels.erase(it);
+		release_panel(p);
+		cloak_refresh();
+		move_to_slot(p.hwnd, p.key);
+		toggle_panel_by_menu(p.title, false);
+		have.erase(p.key);
+	}
+	for (auto it = g_floats.begin(); it != g_floats.end();) {
+		if (it->key.empty() || needed.count(it->key)) { ++it; continue; }
+		FloatPanel f = *it;
+		it = g_floats.erase(it);
+		RemoveWindowSubclass(f.hwnd, float_subclass_proc, FLOAT_SUBCLASS_ID);
+		move_to_slot(f.hwnd, f.key);
+		toggle_panel_by_menu(g_titles.count(f.key) ? g_titles[f.key] : window_text(f.hwnd), false);
+		have.erase(f.key);
+	}
+
+	// 4. 新しい分割木に従って、区画の中と浮いた窓を入れ替える
+	g_max_key.clear();
+	g_root = std::move(target);
+	for (auto it = g_panels.begin(); it != g_panels.end();) {
+		if (in_tree.count(it->key)) { ++it; continue; }
+		Panel p = *it;
+		it = g_panels.erase(it);
+		release_panel(p);
+		cloak_refresh();   // 浮いた窓の位置へ動かし終えるまで見せない
+		if (!IsWindowVisible(p.hwnd)) ShowWindow(p.hwnd, SW_SHOWNA);
+		add_float(p.hwnd, p.key);
+	}
+	for (auto& [k, h] : have) {
+		if (find_panel(h)) continue;
+		if (in_tree.count(k)) {
+			remove_float(h);
+			cloak_release(h);
+			if (!capture_panel(h, k)) {
+				// 取り込めなければ分割木から外し、浮いた窓のままにする
+				remove_key(g_root.get(), k);
+				add_float(h, k);
+			}
+		} else {
+			add_float(h, k);
+		}
+	}
+	for (auto& f : g_floats) {
+		auto it = g_settings.floating.find(f.key);
+		if (it == g_settings.floating.end()) continue;
+		const RECT& fr = it->second;
+		SetWindowPos(f.hwnd, nullptr, fr.left, fr.top, fr.right - fr.left, fr.bottom - fr.top, SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+	relayout();
+	UpdateWindow(g_container);
+	save_tree();
+	return true;
+}
+
 static void switch_workspace(int index, bool reset_to_saved) {
 	if (!g_active || g_busy || index < 0 || index >= (int)g_settings.workspaces.size()) return;
 	if (index == g_settings.active_ws && !reset_to_saved) return;
@@ -1416,7 +1702,15 @@ static void switch_workspace(int index, bool reset_to_saved) {
 	g_settings.floating = w.work_floating;
 	g_settings.save();
 	log(L"ワークスペースを切り替え: " + w.name + (reset_to_saved ? L" (保存時の配置に戻す)" : L""));
+	if (rearrange_from_settings()) {
+		log(L"並べ替えで切り替えた");
+		return;
+	}
+	// 揃えられない場合は、本体に全パネルを切り離し直させる (確実な経路)
+	log(L"作り直しで切り替える");
+	show_cover(ui::COVER_SWITCH);
 	rebuild_from_settings();
+	hide_cover();
 }
 
 static void new_workspace() {
@@ -2017,7 +2311,8 @@ static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 	switch (msg) {
 		case WM_SIZE: {
 			LRESULT r = DefSubclassProc(hwnd, msg, wp, lp);
-			if (g_active || g_cover) position_container();
+			if (g_active) position_container();
+			position_cover();
 			return r;
 		}
 		case WM_DPICHANGED: {
@@ -2039,6 +2334,19 @@ static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 				if (!t.empty()) log(L"[調査] 有効中にメニューで選択: " + t);
 			}
 #endif
+			// 有効中の「表示」→「レイアウト」(切り替え・作成) は画面が崩れるため止める (TP_GUIdocker 自身の自動操作は除く)
+			if (g_active && !g_busy && HIWORD(wp) == 0 && lp == 0) {
+				if (HMENU layout = find_layout_menu(GetMenu(hwnd))) {
+					int n = GetMenuItemCount(layout);
+					for (int i = 0; i < n; i++) {
+						if (GetMenuItemID(layout, i) == LOWORD(wp)) {
+							log(L"有効中のレイアウトの切り替え・作成を止めた");
+							notify(ui::LAYOUT_BLOCKED, MB_ICONINFORMATION);
+							return 0;
+						}
+					}
+				}
+			}
 			// メディアエクスプローラーは切り離せない (本体の仕様) ため、自由分割中は開かせない
 			if (g_active && HIWORD(wp) == 0 && g_explorer_cmds.count(LOWORD(wp))) {
 				notify(ui::EXPLORER_NOTICE, MB_ICONINFORMATION);
@@ -2052,7 +2360,9 @@ static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 			g_settings.resume = was_active;
 			g_settings.save();
 			log(L"本体の終了要求 (有効中=" + std::to_wstring(was_active) + L")");
+			g_closing = true;
 			if (was_active) exit_dock(true);
+			g_closing = false;
 			LRESULT r = DefSubclassProc(hwnd, msg, wp, lp);
 			// 保存確認などで終了が取り消された場合は、少し待って自由分割へ戻る
 			if (was_active && IsWindow(hwnd) && !g_main_destroying && g_container) {
@@ -2452,9 +2762,11 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				KillTimer(hwnd, TIMER_STARTUP_ENTER);
 				if (g_menu_wait_tries > 0) log(L"起動時の有効化: 本体のメニューの中身ができた");
 				g_menu_wait_tries = 0;
+				g_startup_enter = true;
 				log(L"前回の状態を引き継いで有効化 (resume=" + std::to_wstring(g_settings.resume) +
 					L" session_active=" + std::to_wstring(g_settings.session_active) + L")");
 				enter_dock(true);
+				g_startup_enter = false;
 				dev_log_uptime(L"起動時の有効化を終えた");
 				hide_cover();
 				update_toggle_menu();
@@ -2513,6 +2825,27 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 			DropTarget t = g_pending_dock;
 			g_pending_dock = {};
 			if (g_active && !g_busy) dock_float((HWND)wp, t.leaf, t.zone, t.tab_index);
+			return 0;
+		}
+
+		case WM_APP_DOCK_RETURN: {
+			// 浮いた窓で「ウィンドウを統合」が選ばれた: 本体へ統合させず、前にいた区画 (無ければ一番大きい区画) へ入れる
+			HWND h = (HWND)wp;
+			FloatPanel* f = find_float(h);
+			if (!g_active || g_busy || !f) return 0;
+			if (g_settings.locked) {
+				log(L"ロック中のため、統合 (区画へ入れる) を見送る");
+				return 0;
+			}
+			Node* leaf = nullptr;
+			DropZone zone = DropZone::Center;
+			return_target(f->key, leaf, zone);
+			if (!leaf) {
+				leaf = largest_leaf();
+				zone = DropZone::Center;
+			}
+			log(L"浮いた窓の「ウィンドウを統合」を、区画へ入れる操作に置き換えた: " + f->key);
+			dock_float(h, leaf, zone, -1);
 			return 0;
 		}
 
@@ -2707,6 +3040,20 @@ bool dock_init() {
 	INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_WIN95_CLASSES };
 	InitCommonControlsEx(&icc);
 	create_lock_tooltip();
+
+	// 覆いの窓 (表示する時にメイン窓の子にする)
+	WNDCLASSEXW cc = {};
+	cc.cbSize = sizeof(cc);
+	cc.lpszClassName = COVER_CLASS;
+	cc.lpfnWndProc = cover_proc;
+	cc.hInstance = dll_instance();
+	cc.hCursor = LoadCursorW(nullptr, IDC_WAIT);
+	if (!RegisterClassExW(&cc) && GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+		UnregisterClassW(COVER_CLASS, dll_instance());
+		RegisterClassExW(&cc);
+	}
+	g_cover_wnd = CreateWindowExW(WS_EX_TOOLWINDOW, COVER_CLASS, L"", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, dll_instance(), nullptr);
+	if (!g_cover_wnd) log(L"覆いの窓を作れない");
 	return true;
 }
 
@@ -2749,6 +3096,11 @@ void dock_shutdown() {
 	if (g_container) DestroyWindow(g_container);
 	g_container = nullptr;
 	UnregisterClassW(CONTAINER_CLASS, dll_instance());
+	if (g_cover_wnd) DestroyWindow(g_cover_wnd);
+	g_cover_wnd = nullptr;
+	g_cover = false;
+	UnregisterClassW(COVER_CLASS, dll_instance());
+	cloak_end();
 	if (g_font) DeleteObject(g_font);
 	g_font = nullptr;
 	unload_private_fonts();

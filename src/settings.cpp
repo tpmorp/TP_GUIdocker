@@ -81,6 +81,22 @@ void Settings::load() {
 	resume = GetPrivateProfileIntW(L"State", L"resume", 0, path.c_str()) != 0;
 	session_active = GetPrivateProfileIntW(L"State", L"session_active", 0, path.c_str()) != 0;
 	verified_version = (DWORD)GetPrivateProfileIntW(L"State", L"verified_version", 0, path.c_str());
+	return_saved_clean = GetPrivateProfileIntW(L"State", L"return_saved_clean", 0, path.c_str()) != 0;
+	return_mates.clear();
+	for (auto& [n, value] : read_section(path, L"Return")) {
+		// 値: セクション名<TAB>仲間<TAB>仲間...
+		std::vector<std::wstring> parts;
+		size_t start = 0;
+		while (start <= value.size()) {
+			size_t tab = value.find(L'\t', start);
+			if (tab == std::wstring::npos) tab = value.size();
+			parts.push_back(value.substr(start, tab - start));
+			start = tab + 1;
+		}
+		if (parts.size() >= 2 && !parts[0].empty()) {
+			return_mates[parts[0]] = std::vector<std::wstring>(parts.begin() + 1, parts.end());
+		}
+	}
 	return_layout = read_string(path, L"Settings", L"return_layout");
 	drop_style = (int)GetPrivateProfileIntW(L"Settings", L"drop_style", (UINT)-1, path.c_str());
 	locked = GetPrivateProfileIntW(L"Settings", L"locked", 0, path.c_str()) != 0;
@@ -139,6 +155,17 @@ void Settings::save() {
 	WritePrivateProfileStringW(L"State", L"resume", resume ? L"1" : L"0", path.c_str());
 	WritePrivateProfileStringW(L"State", L"session_active", session_active ? L"1" : L"0", path.c_str());
 	WritePrivateProfileStringW(L"State", L"verified_version", std::to_wstring(verified_version).c_str(), path.c_str());
+	WritePrivateProfileStringW(L"State", L"return_saved_clean", return_saved_clean ? L"1" : L"0", path.c_str());
+	WritePrivateProfileStringW(L"Return", nullptr, nullptr, path.c_str());
+	{
+		int n = 0;
+		for (auto& [key, mates] : return_mates) {
+			if (mates.empty()) continue;
+			std::wstring v = key;
+			for (auto& m : mates) v += L'\t' + m;
+			WritePrivateProfileStringW(L"Return", std::to_wstring(n++).c_str(), v.c_str(), path.c_str());
+		}
+	}
 	WritePrivateProfileStringW(L"Settings", L"return_layout", return_layout.c_str(), path.c_str());
 	WritePrivateProfileStringW(L"Settings", L"drop_style", std::to_wstring(drop_style).c_str(), path.c_str());
 	WritePrivateProfileStringW(L"Settings", L"locked", locked ? L"1" : L"0", path.c_str());

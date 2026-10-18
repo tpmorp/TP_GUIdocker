@@ -25,8 +25,14 @@ constexpr const wchar_t* MENU_DROP_STYLE_COMPASS = L"ドラッグ時の表示:�
 constexpr const wchar_t* MENU_DROP_STYLE_REGION = L"ドラッグ時の表示:区画の領域式";
 // 「戻り先レイアウトを選ぶ」の一覧の先頭 [実装済み]
 constexpr const wchar_t* RETURN_AUTO = L"自動 (有効化する直前の配置)";
-// 起動時、準備が整うまで本体の画面を覆う表示 [実装済み]
+// 有効化の間 (起動時・手動)、準備が整うまで本体の画面を覆う表示 [実装済み]
 constexpr const wchar_t* COVER = L"TP_GUIdockerを有効化しています…";
+// 無効化・終了の間、本体の画面を覆う表示 [実装済み]
+constexpr const wchar_t* COVER_DISABLE = L"TP_GUIdockerを無効化しています…";
+// ワークスペースの切り替えで配置を作り直す間、本体の画面を覆う表示 [実装済み]
+constexpr const wchar_t* COVER_SWITCH = L"ワークスペースを切り替えています…";
+// 有効中に「表示」→「レイアウト」の項目を選んだ時の案内 [実装済み]
+constexpr const wchar_t* LAYOUT_BLOCKED = L"TP_GUIdockerの有効中は、レイアウトの切り替え・作成はできません。\n「編集」→「プラグイン」→「TP_GUIdocker」→「TP_GUIdockerを無効化」で標準の画面に戻してから選んでください。";
 // パネルが1枚も無い区画の中央 [実装済み]
 constexpr const wchar_t* EMPTY_AREA = L"";
 // 初めて有効化する時の確認 (%lu は本体バージョン) [実装済み]
