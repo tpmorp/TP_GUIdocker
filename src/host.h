@@ -13,7 +13,7 @@ constexpr const wchar_t* HOST_PANEL_CLASS = L"aviutl2Manager";
 HWND find_main_window();
 
 // 切り離された本体パネル (メインウィンドウをオーナーに持つ aviutl2Manager の可視窓)
-std::vector<HWND> find_floating_panels(HWND main);
+std::vector<HWND> find_floating_panels(HWND main, bool include_hidden = false);
 
 // メニューバーを名前でたどり、項目の番号を返す (見つからなければ 0)
 // 例: { L"表示", L"レイアウト", L"basic" }

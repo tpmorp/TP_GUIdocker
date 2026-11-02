@@ -53,6 +53,9 @@ struct Settings {
 	// 再び開かれた・統合を選ばれた時に、仲間のいる区画へ戻すために使う
 	std::map<std::wstring, std::vector<std::wstring>> return_mates;
 
+	// [Titles] セクション名 → 窓の題名 (ワークスペースの切り替えで「表示」メニューから開閉するために使う。一度見たものを次回の起動へ持ち越す)
+	std::map<std::wstring, std::wstring> titles;
+
 	// 使用中のワークスペースの、使用中の配置 (workspaces[active_ws].work_* と同じもの)
 	std::wstring tree;
 	FloatingMap floating;

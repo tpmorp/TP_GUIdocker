@@ -82,6 +82,12 @@ void Settings::load() {
 	session_active = GetPrivateProfileIntW(L"State", L"session_active", 0, path.c_str()) != 0;
 	verified_version = (DWORD)GetPrivateProfileIntW(L"State", L"verified_version", 0, path.c_str());
 	return_saved_clean = GetPrivateProfileIntW(L"State", L"return_saved_clean", 0, path.c_str()) != 0;
+	titles.clear();
+	for (auto& [k, v] : read_section(path, L"Titles")) {
+		// キーは番号、値は セクション名<TAB>題名
+		auto tab = v.find(L'	');
+		if (tab != std::wstring::npos && tab > 0) titles[v.substr(0, tab)] = v.substr(tab + 1);
+	}
 	return_mates.clear();
 	for (auto& [n, value] : read_section(path, L"Return")) {
 		// 値: セクション名<TAB>仲間<TAB>仲間...
@@ -156,6 +162,14 @@ void Settings::save() {
 	WritePrivateProfileStringW(L"State", L"session_active", session_active ? L"1" : L"0", path.c_str());
 	WritePrivateProfileStringW(L"State", L"verified_version", std::to_wstring(verified_version).c_str(), path.c_str());
 	WritePrivateProfileStringW(L"State", L"return_saved_clean", return_saved_clean ? L"1" : L"0", path.c_str());
+	WritePrivateProfileStringW(L"Titles", nullptr, nullptr, path.c_str());
+	{
+		int n = 0;
+		for (auto& [key, title] : titles) {
+			if (key.empty() || title.empty()) continue;
+			WritePrivateProfileStringW(L"Titles", std::to_wstring(n++).c_str(), (key + L'	' + title).c_str(), path.c_str());
+		}
+	}
 	WritePrivateProfileStringW(L"Return", nullptr, nullptr, path.c_str());
 	{
 		int n = 0;

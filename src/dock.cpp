@@ -122,7 +122,6 @@ static bool g_closing = false;         // 本体の終了に伴う無効化の�
 
 static std::vector<Panel> g_panels;
 static std::vector<FloatPanel> g_floats;
-static std::map<std::wstring, std::wstring> g_titles;   // セクション名 → 窓の題名 (この起動中に見たもの。「表示」メニューで開閉するために使う)
 static std::unique_ptr<Node> g_root;
 static std::vector<TabHit> g_tab_hits;
 static std::vector<LayoutSlot> g_slots;   // 照合用の仮位置
@@ -648,7 +647,7 @@ static bool capture_panel(HWND h, const std::wstring& key) {
 	if (Node* leaf = find_leaf_with(g_root.get(), key)) {
 		if (leaf->active.empty()) leaf->active = key;
 	}
-	if (!p.title.empty()) g_titles[key] = p.title;
+	if (!p.title.empty()) g_settings.titles[key] = p.title;
 	log(L"取り込み " + key + L" '" + p.title + L"'");
 	return true;
 }
@@ -773,7 +772,7 @@ static void add_float(HWND h, const std::wstring& key) {
 	g_floats.push_back({ h, key });
 	if (!key.empty()) {
 		std::wstring t = window_text(h);
-		if (!t.empty()) g_titles[key] = t;
+		if (!t.empty()) g_settings.titles[key] = t;
 	}
 	SetWindowSubclass(h, float_subclass_proc, FLOAT_SUBCLASS_ID, 0);
 }
@@ -1356,6 +1355,24 @@ static bool build_and_capture(bool interactive) {
 		}
 		found.push_back({ key, h });
 	}
+	// 非表示の切り離し窓も含め、題名を覚える (ワークスペースの切り替えで、まだ区画に入れたことのないパネルを
+	// 「表示」メニューから開けるように)。位置で照合できたものだけ
+	{
+		bool learned = false;
+		for (HWND h : find_floating_panels(g_main, true)) {
+			RECT r;
+			GetWindowRect(h, &r);
+			std::wstring key = match_slot(g_slots, { r.left, r.top });
+			std::wstring t = window_text(h);
+			if (key.empty() || t.empty()) continue;
+			auto it = g_settings.titles.find(key);
+			if (it == g_settings.titles.end() || it->second != t) {
+				g_settings.titles[key] = t;
+				learned = true;
+			}
+		}
+		if (learned) g_settings.save();
+	}
 	std::wstring missing;
 	for (auto& k : plan.visible_keys) {
 		bool ok = std::any_of(found.begin(), found.end(), [&](auto& f) { return f.first == k; });
@@ -1599,7 +1616,7 @@ static bool rearrange_from_settings() {
 	std::vector<std::wstring> missing;
 	for (auto& k : needed) {
 		if (have.count(k)) continue;
-		if (!g_titles.count(k)) {
+		if (!g_settings.titles.count(k)) {
 			log(L"並べ替えでは切り替えられない (題名が分からないパネル: " + k + L")");
 			return false;
 		}
@@ -1611,7 +1628,7 @@ static bool rearrange_from_settings() {
 
 	// 2. 足りないパネルを「表示」メニューで開かせ、仮位置で照合する
 	for (auto& k : missing) {
-		if (!toggle_panel_by_menu(g_titles[k], true)) {
+		if (!toggle_panel_by_menu(g_settings.titles[k], true)) {
 			log(L"並べ替えでは切り替えられない (「表示」メニューに無い: " + k + L")");
 			return false;
 		}
@@ -1649,7 +1666,7 @@ static bool rearrange_from_settings() {
 		it = g_floats.erase(it);
 		RemoveWindowSubclass(f.hwnd, float_subclass_proc, FLOAT_SUBCLASS_ID);
 		move_to_slot(f.hwnd, f.key);
-		toggle_panel_by_menu(g_titles.count(f.key) ? g_titles[f.key] : window_text(f.hwnd), false);
+		toggle_panel_by_menu(g_settings.titles.count(f.key) ? g_settings.titles[f.key] : window_text(f.hwnd), false);
 		have.erase(f.key);
 	}
 

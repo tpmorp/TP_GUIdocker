@@ -28,14 +28,14 @@ HWND find_main_window() {
 	return ctx.found;
 }
 
-std::vector<HWND> find_floating_panels(HWND main) {
-	struct Ctx { DWORD pid; HWND main; std::vector<HWND> list; } ctx = { GetCurrentProcessId(), main, {} };
+std::vector<HWND> find_floating_panels(HWND main, bool include_hidden) {
+	struct Ctx { DWORD pid; HWND main; bool hidden; std::vector<HWND> list; } ctx = { GetCurrentProcessId(), main, include_hidden, {} };
 	EnumWindows([](HWND h, LPARAM l) -> BOOL {
 		auto c = (Ctx*)l;
 		DWORD pid = 0;
 		GetWindowThreadProcessId(h, &pid);
 		if (pid != c->pid) return TRUE;
-		if (is_host_panel_class(h) && GetWindow(h, GW_OWNER) == c->main && IsWindowVisible(h)) {
+		if (is_host_panel_class(h) && GetWindow(h, GW_OWNER) == c->main && (c->hidden || IsWindowVisible(h))) {
 			c->list.push_back(h);
 		}
 		return TRUE;
