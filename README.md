@@ -11,7 +11,7 @@ AviUtl2 標準の画面は決まった区画にパネルを置く作りですが
 - 無効化すれば、 AviUtl2 の画面に戻る
 
 ## 動作環境
-- AviUtl ExEdit2 version 2.1.14 で確認済
+- AviUtl ExEdit2 version 2.1.16 で確認済
 - Windows 11
 
 ## 導入
