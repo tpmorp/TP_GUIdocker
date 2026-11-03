@@ -211,6 +211,21 @@ void compute_layout(Node* n, const RECT& rc, int gap, int tab_h) {
 }
 
 //---------------------------------------------------------------------
+//	タブ帯の横送り
+//---------------------------------------------------------------------
+
+int clamp_tab_scroll(int off, int total, int view_w) {
+	int max_off = std::max(0, total - view_w);
+	return std::clamp(off, 0, max_off);
+}
+
+int reveal_tab_scroll(int off, int left, int right, int total, int view_w) {
+	if (right > off + view_w) off = right - view_w;
+	if (left < off) off = left;
+	return clamp_tab_scroll(off, total, view_w);
+}
+
+//---------------------------------------------------------------------
 //	組み替え (ドッキング)
 //---------------------------------------------------------------------
 

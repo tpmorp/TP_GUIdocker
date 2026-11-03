@@ -24,6 +24,7 @@
 #include "ui_spec.h"
 
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <set>
 
@@ -70,6 +71,7 @@ enum : UINT_PTR {
 	TIMER_STARTUP_ENTER = 4,
 	TIMER_LONG_PRESS = 5,     // タブの長押しの判定
 	TIMER_DRAG_POLL = 6,      // ドラッグ中の Esc キーの監視
+	TIMER_TAB_SCROLL = 7,     // タブ帯の横送りをなめらかに進める
 };
 
 constexpr UINT_PTR PANEL_SUBCLASS_ID = 0x7447;
@@ -103,6 +105,20 @@ struct FloatPanel {
 struct TabHit {
 	Node* leaf;
 	std::wstring key;
+	RECT rect;   // 押せる範囲 (帯に見えている部分。まったく見えていないタブは空)
+	RECT full;   // タブ本来の範囲 (帯からはみ出す分も含む。描画と差し込み位置の判定に使う)
+};
+
+// タブが帯に入りきらない区画の横送り (実行中のみ保持し、保存しない)
+struct TabScroll {
+	int off = 0;                 // 今の送り量
+	int target = 0;              // 目標の送り量 (off がここへ向かって動く)
+	int total = 0;              // タブの幅の合計
+	int view_w = 0;              // 見えている幅 (一覧ボタンを除く)
+	std::wstring seen_active;    // 前回の配置時の選択中タブ (変わったら見える位置へ送る)
+};
+struct TabListButton {
+	Node* leaf;
 	RECT rect;
 };
 
@@ -124,6 +140,8 @@ static std::vector<Panel> g_panels;
 static std::vector<FloatPanel> g_floats;
 static std::unique_ptr<Node> g_root;
 static std::vector<TabHit> g_tab_hits;
+static std::map<Node*, TabScroll> g_tab_scroll;
+static std::vector<TabListButton> g_tab_lists;   // あふれている区画の一覧ボタン
 static std::vector<LayoutSlot> g_slots;   // 照合用の仮位置
 static std::set<UINT> g_explorer_cmds;    // 「表示」→「メディアエクスプローラー」の項目番号
 
@@ -459,6 +477,76 @@ static void position_container() {
 	position_cover();   // 覆いを出している間は、入れ物より手前に保つ
 }
 
+// 各葉の表示中タブを決め、タブの当たり判定 (g_tab_hits) と一覧ボタンを作り直す。dc には帯の書体を選んでおく
+static void build_tab_hits(HDC dc) {
+	g_tab_hits.clear();
+	g_tab_lists.clear();
+	int pad = scaled(ui::TAB_PADDING);
+	std::set<Node*> overflowed;
+	bool animating = false;
+	for_each_leaf(g_root.get(), [&](Node* leaf) {
+		if (IsRectEmpty(&leaf->rect)) return;  // 最大化中に隠している葉
+		if (!is_present(leaf->active)) {
+			leaf->active.clear();
+			for (auto& k : leaf->panels) if (is_present(k)) { leaf->active = k; break; }
+		}
+		// タブ本来の幅 (縮めない)
+		struct Item { std::wstring key; int w; };
+		std::vector<Item> items;
+		int total = 0;
+		for (auto& k : leaf->panels) {
+			if (!is_present(k)) continue;
+			std::wstring title;
+			for (auto& p : g_panels) if (p.key == k) { title = p.title; break; }
+			SIZE sz = {};
+			GetTextExtentPoint32W(dc, title.c_str(), (int)title.size(), &sz);
+			items.push_back({ k, (int)sz.cx + pad * 2 });
+			total += items.back().w;
+		}
+		// 帯に入りきらない時は、右端に一覧ボタンを置き、残りをタブの表示範囲にして横送りする
+		int strip_w = leaf->tabs.right - leaf->tabs.left;
+		int view_w = strip_w;
+		int off = 0;
+		if (total > strip_w) {
+			int btn_w = std::min(strip_w, tab_height());
+			view_w = strip_w - btn_w;
+			overflowed.insert(leaf);
+			TabScroll& sc = g_tab_scroll[leaf];
+			sc.total = total;
+			sc.view_w = view_w;
+			if (sc.seen_active != leaf->active) {
+				// 選択中のタブが変わった (または初めてあふれた) ので、見える位置へ送る
+				bool first = sc.seen_active.empty();
+				sc.seen_active = leaf->active;
+				int x = 0;
+				for (auto& it : items) {
+					if (it.key == leaf->active) { sc.target = reveal_tab_scroll(sc.target, x, x + it.w, total, view_w); break; }
+					x += it.w;
+				}
+				if (first) sc.off = sc.target;   // 初めてあふれた時は、動かさず最初からその位置に置く
+			}
+			sc.target = clamp_tab_scroll(sc.target, total, view_w);
+			sc.off = clamp_tab_scroll(sc.off, total, view_w);
+			if (sc.off != sc.target) animating = true;
+			off = sc.off;
+			g_tab_lists.push_back({ leaf, { leaf->tabs.right - btn_w, leaf->tabs.top, leaf->tabs.right, leaf->tabs.bottom } });
+		}
+		RECT view = { leaf->tabs.left, leaf->tabs.top, leaf->tabs.left + view_w, leaf->tabs.bottom };
+		int x = leaf->tabs.left - off;
+		for (auto& it : items) {
+			RECT full = { x, leaf->tabs.top, x + it.w, leaf->tabs.bottom };
+			RECT vis = {};
+			if (!IntersectRect(&vis, &full, &view)) vis = {};
+			g_tab_hits.push_back({ leaf, it.key, vis, full });
+			x += it.w;
+		}
+	});
+	for (auto it = g_tab_scroll.begin(); it != g_tab_scroll.end();) {
+		it = overflowed.count(it->first) ? std::next(it) : g_tab_scroll.erase(it);
+	}
+	// 送り量が目標へ向かって動いている間は、タイマーで少しずつ進める (なめらかに送る)
+	if (animating) SetTimer(g_container, TIMER_TAB_SCROLL, 15, nullptr);
+}
 static void relayout() {
 	if (!g_active || !g_root) return;
 	RECT rc;
@@ -512,26 +600,7 @@ static void relayout() {
 	}
 
 	// 各葉の表示中タブを決め、タブの当たり判定を作る
-	g_tab_hits.clear();
-	int pad = scaled(ui::TAB_PADDING);
-	for_each_leaf(g_root.get(), [&](Node* leaf) {
-		if (IsRectEmpty(&leaf->rect)) return;  // 最大化中に隠している葉
-		if (!is_present(leaf->active)) {
-			leaf->active.clear();
-			for (auto& k : leaf->panels) if (is_present(k)) { leaf->active = k; break; }
-		}
-		int x = leaf->tabs.left;
-		for (auto& k : leaf->panels) {
-			if (!is_present(k)) continue;
-			std::wstring title;
-			for (auto& p : g_panels) if (p.key == k) { title = p.title; break; }
-			SIZE sz = {};
-			GetTextExtentPoint32W(dc, title.c_str(), (int)title.size(), &sz);
-			RECT r = { x, leaf->tabs.top, std::min<LONG>(leaf->tabs.right, x + sz.cx + pad * 2), leaf->tabs.bottom };
-			g_tab_hits.push_back({ leaf, k, r });
-			x = r.right;
-		}
-	});
+	build_tab_hits(dc);
 	SelectObject(dc, old);
 	ReleaseDC(g_container, dc);
 
@@ -829,7 +898,7 @@ static int tab_insert_index(const Node* leaf, POINT client) {
 	int index = 0;
 	for (auto& t : g_tab_hits) {
 		if (t.leaf != leaf) continue;
-		if (client.x < (t.rect.left + t.rect.right) / 2) return index;
+		if (client.x < (t.full.left + t.full.right) / 2) return index;
 		index++;
 	}
 	return index;
@@ -1173,6 +1242,79 @@ static void show_tab_menu(Node* leaf, const std::wstring& key, POINT screen) {
 	}
 	relayout();
 	save_tree();
+}
+
+static DWORD g_list_closed_tick = 0;   // 一覧をボタンの上で閉じた時刻
+
+// あふれた区画の一覧ボタン: その区画の全タブを一覧にし、選んだタブを選択して見える位置へ送る
+static void show_tab_list(Node* leaf, RECT button) {
+	HMENU menu = CreatePopupMenu();
+	std::vector<std::wstring> keys;
+	for (auto& k : leaf->panels) {
+		if (!is_present(k)) continue;
+		AppendMenuW(menu, MF_STRING | (k == leaf->active ? MF_CHECKED : 0), 1 + keys.size(), panel_title(k).c_str());
+		keys.push_back(k);
+	}
+	POINT screen = { button.right, button.bottom };
+	ClientToScreen(g_container, &screen);
+	UINT cmd = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTALIGN | TPM_RIGHTBUTTON, screen.x, screen.y, 0, g_container, nullptr);
+	DestroyMenu(menu);
+	if (cmd == 0) {
+		// ボタンをもう一度押して閉じた場合、その押下が続けて届いて開き直さないよう、時刻を覚える
+		POINT cur;
+		GetCursorPos(&cur);
+		ScreenToClient(g_container, &cur);
+		if (PtInRect(&button, cur)) {
+			g_list_closed_tick = GetTickCount();
+			// 閉じた押下がすでに届いていれば取り除く (開き直し防止)
+			MSG msg;
+			PeekMessageW(&msg, g_container, WM_LBUTTONDOWN, WM_LBUTTONDOWN, PM_REMOVE);
+		}
+		return;
+	}
+	if (cmd > keys.size()) return;
+	g_last_key = keys[cmd - 1];
+	leaf->active = keys[cmd - 1];
+	relayout();   // 選択が変わったので、relayout が見える位置へ送る
+	save_tree();
+}
+
+// 横送りを1コマ進める。帯だけを描き直すので、パネルの再配置はしない
+static void tab_scroll_tick() {
+	bool moving = false;
+	for (auto& kv : g_tab_scroll) {
+		TabScroll& sc = kv.second;
+		int diff = sc.target - sc.off;
+		if (diff == 0) continue;
+		int step = diff / 3;
+		if (step == 0) step = diff > 0 ? 1 : -1;
+		sc.off += step;
+		if (sc.off != sc.target) moving = true;
+	}
+	if (!moving) KillTimer(g_container, TIMER_TAB_SCROLL);
+	if (!g_root || !g_active) return;
+	HDC dc = GetDC(g_container);
+	HGDIOBJ old = SelectObject(dc, g_font);
+	build_tab_hits(dc);
+	SelectObject(dc, old);
+	ReleaseDC(g_container, dc);
+	for (auto& kv : g_tab_scroll) InvalidateRect(g_container, &kv.first->tabs, FALSE);
+}
+
+// タブ帯の上のホイール: あふれている区画のタブを横に送る
+static bool scroll_tabs_at(POINT client, int delta) {
+	for (auto& b : g_tab_lists) {
+		if (!PtInRect(&b.leaf->tabs, client)) continue;
+		auto it = g_tab_scroll.find(b.leaf);
+		if (it == g_tab_scroll.end()) return false;
+		TabScroll& sc = it->second;
+		// 1ノッチ (120) あたりタブ帯の高さの2倍。下へ回すと右へ送る。目標だけ動かし、実際の送りはタイマーが進める
+		int step = tab_height() * 2 * -delta / 120;
+		sc.target = clamp_tab_scroll(sc.target + step, sc.total, sc.view_w);
+		if (sc.target != sc.off) SetTimer(g_container, TIMER_TAB_SCROLL, 15, nullptr);
+		return true;
+	}
+	return false;
 }
 
 //---------------------------------------------------------------------
@@ -2632,11 +2774,18 @@ static Node* hit_splitter(Node* n, POINT pt) {
 
 static void paint(HWND hwnd) {
 	PAINTSTRUCT ps;
-	HDC dc = BeginPaint(hwnd, &ps);
+	HDC real_dc = BeginPaint(hwnd, &ps);
 	RECT rc;
 	GetClientRect(hwnd, &rc);
+	// 画面へ直接描くと、帯の塗りつぶしからタブの描画までの途中経過が見えて点滅するため、
+	// いったんメモリ上に描き、最後に1回で転送する
+	HDC dc = CreateCompatibleDC(real_dc);
+	const RECT pr = ps.rcPaint;   // 描き直しが必要な範囲だけを作る (横送り中は帯の部分だけになる)
+	HBITMAP mem_bmp = CreateCompatibleBitmap(real_dc, std::max<LONG>(1, pr.right - pr.left), std::max<LONG>(1, pr.bottom - pr.top));
+	HGDIOBJ old_bmp = SelectObject(dc, mem_bmp);
+	SetViewportOrgEx(dc, -pr.left, -pr.top, nullptr);
 
-	COLORREF c_sep = style_color("WindowSeparator", RGB(0, 0, 0));
+	COLORREF c_sep =style_color("WindowSeparator", RGB(0, 0, 0));
 	COLORREF c_bg = style_color("Background", RGB(0x20, 0x20, 0x20));
 	COLORREF c_tabbar = style_color("Grouping", RGB(0x38, 0x38, 0x38));
 	COLORREF c_tab_sel = style_color("GroupingSelect", RGB(0x48, 0x48, 0x48));
@@ -2690,23 +2839,48 @@ static void paint(HWND hwnd) {
 			}
 		});
 		for (auto& t : g_tab_hits) {
+			if (IsRectEmpty(&t.rect)) continue;   // 帯の外へ送られて見えていないタブ
+			// 帯からはみ出す部分 (一覧ボタンの下など) に描かないよう、見えている範囲に閉じ込める
+			int saved = SaveDC(dc);
+			IntersectClipRect(dc, t.rect.left, t.rect.top, t.rect.right, t.rect.bottom);
 			bool sel = (t.leaf->active == t.key);
 			if (sel) {
-				fill(t.rect, c_tab_sel);
+				fill(t.full, c_tab_sel);
 				// 選択中のタブの下線 (テーマの色)
 				int line = scaled(ui::TAB_ACTIVE_LINE);
-				if (line > 0) fill({ t.rect.left, t.rect.bottom - line, t.rect.right, t.rect.bottom }, c_ws_sel);
+				if (line > 0) fill({ t.full.left, t.full.bottom - line, t.full.right, t.full.bottom }, c_ws_sel);
 			}
-			RECT line = { t.rect.right - 1, t.rect.top + scaled(4), t.rect.right, t.rect.bottom - scaled(4) };
+			RECT line = { t.full.right - 1, t.full.top + scaled(4), t.full.right, t.full.bottom - scaled(4) };
 			fill(line, c_tab_line);
 			std::wstring title;
 			for (auto& p : g_panels) if (p.key == t.key) { title = p.title; break; }
 			SetTextColor(dc, sel ? c_text : c_text_dis);
-			RECT r = t.rect;
+			RECT r = t.full;
 			DrawTextW(dc, title.c_str(), -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+			RestoreDC(dc, saved);
+		}
+		// あふれている区画の一覧ボタン (下向きの三角)
+		for (auto& b : g_tab_lists) {
+			fill(b.rect, c_tabbar);
+			RECT edge = { b.rect.left, b.rect.top + scaled(4), b.rect.left + 1, b.rect.bottom - scaled(4) };
+			fill(edge, c_tab_line);
+			int cx = (b.rect.left + b.rect.right) / 2, cy = (b.rect.top + b.rect.bottom) / 2;
+			int hw = scaled(4), hh = scaled(2);
+			POINT tri[3] = { { cx - hw, cy - hh }, { cx + hw, cy - hh }, { cx, cy + hh + 1 } };
+			HBRUSH br = CreateSolidBrush(c_text_dis);
+			HGDIOBJ ob = SelectObject(dc, br);
+			HGDIOBJ op = SelectObject(dc, GetStockObject(NULL_PEN));
+			Polygon(dc, tri, 3);
+			SelectObject(dc, op);
+			SelectObject(dc, ob);
+			DeleteObject(br);
 		}
 	}
 	SelectObject(dc, old);
+	BitBlt(real_dc, pr.left, pr.top, pr.right - pr.left, pr.bottom - pr.top, dc, pr.left, pr.top, SRCCOPY);
+	SelectObject(dc, old_bmp);
+	DeleteObject(mem_bmp);
+	DeleteDC(dc);
 	EndPaint(hwnd, &ps);
 }
 
@@ -2791,6 +2965,8 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				hide_cover();
 				update_toggle_menu();
 				update_lock_menu();
+			} else if (wp == TIMER_TAB_SCROLL) {
+				tab_scroll_tick();
 			} else if (wp == TIMER_WATCH) {
 				watch();
 			} else if (wp == TIMER_LONG_PRESS) {
@@ -2869,6 +3045,14 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 			return 0;
 		}
 
+		case WM_MOUSEWHEEL: {
+			if (!g_root || !g_active || g_busy || g_dd.state != DragState::None) break;
+			POINT pt = { (short)LOWORD(lp), (short)HIWORD(lp) };   // 画面座標
+			ScreenToClient(hwnd, &pt);
+			if (scroll_tabs_at(pt, (short)HIWORD(wp))) return 0;
+			break;
+		}
+
 		case WM_SETCURSOR:
 			if (LOWORD(lp) == HTCLIENT && g_root) {
 				if (g_dd.state == DragState::Armed || g_dd.state == DragState::Dragging) {
@@ -2909,6 +3093,14 @@ static LRESULT CALLBACK container_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 				g_drag = s;
 				SetCapture(hwnd);
 				return 0;
+			}
+			for (auto& b : g_tab_lists) {
+				if (PtInRect(&b.rect, pt)) {
+					// 開いていた一覧を、このボタンの押下で閉じた直後なら、開き直さない
+					if (GetTickCount() - g_list_closed_tick > 400) show_tab_list(b.leaf, b.rect);
+					g_list_closed_tick = 0;
+					return 0;
+				}
 			}
 			for (auto& t : g_tab_hits) {
 				if (!PtInRect(&t.rect, pt)) continue;

@@ -347,6 +347,17 @@ int wmain(int argc, wchar_t** argv) {
 
 	test_menu_find();
 
+	// タブ帯の横送り
+	CHECK(clamp_tab_scroll(-5, 500, 200) == 0);
+	CHECK(clamp_tab_scroll(100, 500, 200) == 100);
+	CHECK(clamp_tab_scroll(999, 500, 200) == 300);
+	CHECK(clamp_tab_scroll(50, 150, 200) == 0);          // 入りきる時は送らない
+	CHECK(reveal_tab_scroll(0, 400, 480, 500, 200) == 280);  // 右にはみ出す → 右端が見えるまで送る
+	CHECK(reveal_tab_scroll(300, 40, 120, 500, 200) == 40);  // 左にはみ出す → 左端が見えるまで戻す
+	CHECK(reveal_tab_scroll(100, 150, 250, 500, 200) == 100); // すでに見えている → そのまま
+	CHECK(reveal_tab_scroll(0, 0, 300, 500, 200) == 0);      // 表示範囲より広いタブは左端を優先
+	CHECK(reveal_tab_scroll(0, 450, 500, 500, 200) == 300);  // 末尾のタブでも送り量の上限を超えない
+
 	printf(failures ? "\n%d 件失敗\n" : "\nすべて成功\n", failures);
 	return failures ? 1 : 0;
 }
