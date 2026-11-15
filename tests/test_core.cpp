@@ -11,6 +11,7 @@
 #include "../src/dock_layout.h"
 #include "../src/common.h"
 #include "../src/menu_find.h"
+#include "../src/settings.h"
 #include <algorithm>
 
 using namespace tpgd;
@@ -57,6 +58,77 @@ static FakeMenu make_menu(const wchar_t* view_name, const wchar_t* layout_name, 
 	return m;
 }
 
+// 設定ファイルの保存と読み込みの往復
+static bool same_settings(const Settings& a, const Settings& b) {
+	if (a.resume != b.resume || a.session_active != b.session_active || a.verified_version != b.verified_version) return false;
+	if (a.return_saved_clean != b.return_saved_clean || a.return_layout != b.return_layout || a.drop_style != b.drop_style) return false;
+	if (a.locked != b.locked || a.theme_color != b.theme_color || a.tree_version != b.tree_version || a.active_ws != b.active_ws) return false;
+	if (a.titles != b.titles || a.return_mates != b.return_mates || a.workspaces.size() != b.workspaces.size()) return false;
+	for (size_t i = 0; i < a.workspaces.size(); i++) {
+		auto& x = a.workspaces[i]; auto& y = b.workspaces[i];
+		if (x.name != y.name || x.saved_tree != y.saved_tree || x.work_tree != y.work_tree) return false;
+		if (x.saved_floating.size() != y.saved_floating.size() || x.work_floating.size() != y.work_floating.size()) return false;
+		for (auto& [k, r] : x.work_floating) {
+			auto it = y.work_floating.find(k);
+			if (it == y.work_floating.end() || !EqualRect(&it->second, &r)) return false;
+		}
+	}
+	return true;
+}
+
+static void test_settings_roundtrip(const wchar_t* real_ini) {
+	std::wstring path = module_dir() + L"\\" TPGD_NAME L".ini";
+	DeleteFileW(path.c_str());
+
+	// 1. 作った設定 (日本語・タブ・浮いた窓あり) と、管理外の [Dev] セクションの保持
+	Settings a;
+	a.resume = true; a.verified_version = 2011800; a.locked = true; a.theme_color = 0x123456; a.drop_style = 1; a.tree_version = 2;
+	a.return_layout = L"私の配置";
+	a.titles[L"preview"] = L"プレビュー編集";
+	a.titles[L"Font Preview"] = L"Font Preview";
+	a.return_mates[L"scene.list"] = { L"setting", L"edit" };
+	Workspace w0; w0.name = L"編集"; w0.saved_tree = w0.work_tree = L"H(0.5,L(a;a|b),L(c;c))";
+	w0.work_floating[L"x"] = { 10, 20, 300, 400 };
+	Workspace w1; w1.name = L"色補正"; w1.saved_tree = w1.work_tree = L"L(a;a)";
+	a.workspaces = { w0, w1 };
+	a.active_ws = 1;
+	a.tree = w1.work_tree;
+	{
+		HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		const unsigned char bom[] = { 0xFF, 0xFE };
+		const wchar_t dev[] = L"[Dev]\r\ns5_nodetach_hidden=1\r\n";
+		DWORD n = 0;
+		WriteFile(f, bom, 2, &n, nullptr);
+		WriteFile(f, dev, sizeof(dev) - sizeof(wchar_t), &n, nullptr);
+		CloseHandle(f);
+	}
+	g_settings = a;
+	g_settings.save();
+	g_settings.save();   // 2回目でも [Dev] が増えたり消えたりしない
+	Settings b;
+	g_settings = b;
+	g_settings.load();
+	b = g_settings;
+	a.workspaces[1].work_tree = a.tree;
+	CHECK(same_settings(a, b));
+	CHECK(GetPrivateProfileIntW(L"Dev", L"s5_nodetach_hidden", 0, path.c_str()) == 1);
+	CHECK(GetPrivateProfileIntW(L"Workspaces", L"count", 0, path.c_str()) == 2);
+
+	// 2. 実機の設定ファイルのコピーを読み込み、保存して読み直しても同じになる
+	if (real_ini && GetFileAttributesW(real_ini) != INVALID_FILE_ATTRIBUTES) {
+		CopyFileW(real_ini, path.c_str(), FALSE);
+		g_settings = Settings();
+		g_settings.load();
+		Settings before = g_settings;
+		g_settings.save();
+		g_settings = Settings();
+		g_settings.load();
+		CHECK(!before.workspaces.empty());
+		CHECK(same_settings(before, g_settings));
+	}
+	DeleteFileW(path.c_str());
+	g_settings = Settings();
+}
 static void test_menu_find() {
 	// 文字のそろえ方
 	CHECK(normalize_menu_text(L"表示(&V)") == L"表示");
@@ -346,6 +418,7 @@ int wmain(int argc, wchar_t** argv) {
 	}
 
 	test_menu_find();
+	test_settings_roundtrip(L"C:\\ProgramData\\aviutl2\\Plugin\\TP_GUIdocker\\TP_GUIdocker.ini");
 
 	// タブ帯の横送り
 	CHECK(clamp_tab_scroll(-5, 500, 200) == 0);

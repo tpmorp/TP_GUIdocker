@@ -13,17 +13,6 @@ static std::wstring settings_path() {
 	return module_dir() + L"\\" TPGD_NAME L".ini";
 }
 
-// プロファイル関数が UTF-16 で書き込むよう、BOM 付きの空ファイルを用意する
-static void ensure_unicode_file(const std::wstring& path) {
-	if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) return;
-	HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (f == INVALID_HANDLE_VALUE) return;
-	const unsigned char bom[] = { 0xFF, 0xFE };
-	DWORD written = 0;
-	WriteFile(f, bom, sizeof(bom), &written, nullptr);
-	CloseHandle(f);
-}
-
 static std::wstring read_string(const std::wstring& path, LPCWSTR section, LPCWSTR key) {
 	std::vector<wchar_t> buf(65536);
 	GetPrivateProfileStringW(section, key, L"", buf.data(), (DWORD)buf.size(), path.c_str());
@@ -148,9 +137,72 @@ void Settings::load() {
 	floating = workspaces[active_ws].work_floating;
 }
 
+// 設定ファイルの内容を組み立てる。プロファイル関数で1項目ずつ書くと、呼び出しのたびにファイル全体を
+// 読み直して書き直すため (実測で1回の保存に約0.6秒)、全体を1回で書き出す
+namespace {
+struct IniText {
+	std::wstring text;
+	void section(const std::wstring& name) {
+		if (!text.empty()) text += L"\r\n";
+		text += L"[" + name + L"]\r\n";
+	}
+	void set(const std::wstring& key, const std::wstring& value) { text += key + L"=" + value + L"\r\n"; }
+};
+
+// 既存の設定ファイルから、このプログラムが管理しないセクション ([Dev] など) をそのまま取り出す
+std::wstring unmanaged_sections(const std::wstring& path) {
+	HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (f == INVALID_HANDLE_VALUE) return {};
+	std::vector<char> raw;
+	char buf[8192];
+	DWORD got = 0;
+	while (ReadFile(f, buf, sizeof(buf), &got, nullptr) && got) raw.insert(raw.end(), buf, buf + got);
+	CloseHandle(f);
+	if (raw.size() < 2 || (unsigned char)raw[0] != 0xFF || (unsigned char)raw[1] != 0xFE) return {};
+	std::wstring all((const wchar_t*)(raw.data() + 2), (raw.size() - 2) / 2);
+
+	std::wstring out;
+	bool keep = false;
+	size_t pos = 0;
+	while (pos < all.size()) {
+		size_t nl = all.find(L'\n', pos);
+		std::wstring line = all.substr(pos, nl == std::wstring::npos ? std::wstring::npos : nl - pos);
+		pos = nl == std::wstring::npos ? all.size() : nl + 1;
+		while (!line.empty() && (line.back() == L'\r' || line.back() == L'\n')) line.pop_back();
+		if (!line.empty() && line.front() == L'[') {
+			auto close = line.find(L']');
+			std::wstring name = close == std::wstring::npos ? line.substr(1) : line.substr(1, close - 1);
+			bool managed = name == L"State" || name == L"Titles" || name == L"Return" || name == L"Settings" ||
+				name == L"Tree" || name == L"Panels" || name == L"Floating" || name == L"Workspaces" || name.rfind(L"Workspace.", 0) == 0;
+			keep = !managed;
+			if (keep) out += L"\r\n";
+		}
+		if (keep && !line.empty()) out += line + L"\r\n";
+	}
+	return out;
+}
+
+bool write_unicode_file(const std::wstring& path, const std::wstring& text) {
+	auto write_to = [&](const std::wstring& target) {
+		HANDLE f = CreateFileW(target.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (f == INVALID_HANDLE_VALUE) return false;
+		const unsigned char bom[] = { 0xFF, 0xFE };
+		DWORD written = 0;
+		bool ok = WriteFile(f, bom, sizeof(bom), &written, nullptr) &&
+			WriteFile(f, text.data(), (DWORD)(text.size() * sizeof(wchar_t)), &written, nullptr);
+		CloseHandle(f);
+		return ok;
+	};
+	// 途中で終わっても設定が壊れないよう、いったん別名で書いてから置き換える
+	std::wstring tmp = path + L".tmp";
+	if (write_to(tmp) && MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) return true;
+	DeleteFileW(tmp.c_str());
+	return write_to(path);
+}
+} // namespace
+
 void Settings::save() {
 	auto path = settings_path();
-	ensure_unicode_file(path);
 
 	// 使用中の配置を、使用中のワークスペースへ書き戻す
 	if (active_ws >= 0 && active_ws < (int)workspaces.size()) {
@@ -158,55 +210,56 @@ void Settings::save() {
 		workspaces[active_ws].work_floating = floating;
 	}
 
-	WritePrivateProfileStringW(L"State", L"resume", resume ? L"1" : L"0", path.c_str());
-	WritePrivateProfileStringW(L"State", L"session_active", session_active ? L"1" : L"0", path.c_str());
-	WritePrivateProfileStringW(L"State", L"verified_version", std::to_wstring(verified_version).c_str(), path.c_str());
-	WritePrivateProfileStringW(L"State", L"return_saved_clean", return_saved_clean ? L"1" : L"0", path.c_str());
-	WritePrivateProfileStringW(L"Titles", nullptr, nullptr, path.c_str());
+	IniText ini;
+	ini.section(L"State");
+	ini.set(L"resume", resume ? L"1" : L"0");
+	ini.set(L"session_active", session_active ? L"1" : L"0");
+	ini.set(L"verified_version", std::to_wstring(verified_version));
+	ini.set(L"return_saved_clean", return_saved_clean ? L"1" : L"0");
+
+	ini.section(L"Titles");
 	{
 		int n = 0;
 		for (auto& [key, title] : titles) {
 			if (key.empty() || title.empty()) continue;
-			WritePrivateProfileStringW(L"Titles", std::to_wstring(n++).c_str(), (key + L'	' + title).c_str(), path.c_str());
+			ini.set(std::to_wstring(n++), key + L'\t' + title);
 		}
 	}
-	WritePrivateProfileStringW(L"Return", nullptr, nullptr, path.c_str());
+	ini.section(L"Return");
 	{
 		int n = 0;
 		for (auto& [key, mates] : return_mates) {
 			if (mates.empty()) continue;
 			std::wstring v = key;
 			for (auto& m : mates) v += L'\t' + m;
-			WritePrivateProfileStringW(L"Return", std::to_wstring(n++).c_str(), v.c_str(), path.c_str());
+			ini.set(std::to_wstring(n++), v);
 		}
 	}
-	WritePrivateProfileStringW(L"Settings", L"return_layout", return_layout.c_str(), path.c_str());
-	WritePrivateProfileStringW(L"Settings", L"drop_style", std::to_wstring(drop_style).c_str(), path.c_str());
-	WritePrivateProfileStringW(L"Settings", L"locked", locked ? L"1" : L"0", path.c_str());
-	WritePrivateProfileStringW(L"Settings", L"theme_color", std::to_wstring(theme_color).c_str(), path.c_str());
-	WritePrivateProfileStringW(L"Settings", L"ws_active_color", nullptr, path.c_str());
-	WritePrivateProfileStringW(L"Tree", L"version", std::to_wstring(tree_version).c_str(), path.c_str());
-	// 旧版の項目は使わないため消す
-	WritePrivateProfileStringW(L"Tree", L"layout", nullptr, path.c_str());
-	WritePrivateProfileStringW(L"Panels", nullptr, nullptr, path.c_str());
-	WritePrivateProfileStringW(L"Floating", nullptr, nullptr, path.c_str());
 
-	// ワークスペース (減った分の古いセクションも消す)
-	int old_count = GetPrivateProfileIntW(L"Workspaces", L"count", 0, path.c_str());
-	for (int i = (int)workspaces.size(); i < old_count; i++) {
-		WritePrivateProfileStringW((L"Workspace." + std::to_wstring(i)).c_str(), nullptr, nullptr, path.c_str());
-	}
-	WritePrivateProfileStringW(L"Workspaces", L"count", std::to_wstring(workspaces.size()).c_str(), path.c_str());
-	WritePrivateProfileStringW(L"Workspaces", L"active", std::to_wstring(active_ws).c_str(), path.c_str());
+	ini.section(L"Settings");
+	ini.set(L"return_layout", return_layout);
+	ini.set(L"drop_style", std::to_wstring(drop_style));
+	ini.set(L"locked", locked ? L"1" : L"0");
+	ini.set(L"theme_color", std::to_wstring(theme_color));
+	// 旧版の項目 (ws_active_color・[Tree] layout・[Panels]・[Floating]) は使わないため書かない
+
+	ini.section(L"Tree");
+	ini.set(L"version", std::to_wstring(tree_version));
+
+	ini.section(L"Workspaces");
+	ini.set(L"count", std::to_wstring(workspaces.size()));
+	ini.set(L"active", std::to_wstring(active_ws));
 	for (size_t i = 0; i < workspaces.size(); i++) {
 		const Workspace& w = workspaces[i];
-		std::wstring sec = L"Workspace." + std::to_wstring(i);
-		WritePrivateProfileStringW(sec.c_str(), L"name", w.name.c_str(), path.c_str());
-		WritePrivateProfileStringW(sec.c_str(), L"saved_tree", w.saved_tree.c_str(), path.c_str());
-		WritePrivateProfileStringW(sec.c_str(), L"saved_floating", encode_floating(w.saved_floating).c_str(), path.c_str());
-		WritePrivateProfileStringW(sec.c_str(), L"work_tree", w.work_tree.c_str(), path.c_str());
-		WritePrivateProfileStringW(sec.c_str(), L"work_floating", encode_floating(w.work_floating).c_str(), path.c_str());
+		ini.section(L"Workspace." + std::to_wstring(i));
+		ini.set(L"name", w.name);
+		ini.set(L"saved_tree", w.saved_tree);
+		ini.set(L"saved_floating", encode_floating(w.saved_floating));
+		ini.set(L"work_tree", w.work_tree);
+		ini.set(L"work_floating", encode_floating(w.work_floating));
 	}
-}
 
+	std::wstring text = ini.text + unmanaged_sections(path);
+	write_unicode_file(path, text);
+}
 } // namespace tpgd

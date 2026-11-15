@@ -3,6 +3,7 @@
 //----------------------------------------------------------------------------------
 #include "host_ops.h"
 #include "host.h"
+#include "dev_probe.h"
 
 #include <algorithm>
 
@@ -144,7 +145,9 @@ void run_command(HWND main, HWND timer_owner, UINT cmd) {
 	g_handled.clear();
 	g_errors = 0;
 	SetTimer(timer_owner, TIMER_HOST_OPS, 50, nullptr);
+	dev_mark(L"命令の送信前");
 	SendMessageW(main, WM_COMMAND, MAKEWPARAM(cmd, 0), 0);
+	dev_mark(L"　本体が命令を処理 (SendMessage が戻るまで)");
 	// 命令の完了後に遅れて出る表示も拾う
 	for (int i = 0; i < 10; i++) {
 		MSG m;
@@ -156,6 +159,7 @@ void run_command(HWND main, HWND timer_owner, UINT cmd) {
 		Sleep(30);
 	}
 	KillTimer(timer_owner, TIMER_HOST_OPS);
+	dev_mark(L"　命令後の見張りの待ち");
 }
 
 FILETIME file_time(const std::wstring& path) {

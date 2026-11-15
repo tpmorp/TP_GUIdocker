@@ -23,6 +23,18 @@ void dev_log_uptime(const wchar_t* what) {
 	log(L"[計測] 本体の起動から " + std::to_wstring(ms) + L" ms: " + what);
 }
 
+void dev_mark(const wchar_t* what, bool begin) {
+	static LARGE_INTEGER freq = {}, t0 = {}, last = {};
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
+	if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+	if (begin || !t0.QuadPart) t0 = last = now;
+	long long step = (now.QuadPart - last.QuadPart) * 1000 / freq.QuadPart;
+	long long total = (now.QuadPart - t0.QuadPart) * 1000 / freq.QuadPart;
+	last = now;
+	log(L"[計測] +" + std::to_wstring(step) + L" ms (合計 " + std::to_wstring(total) + L" ms): " + what);
+}
+
 std::wstring dev_menu_text(HMENU root, UINT id) {
 	if (!root) return {};
 	int n = GetMenuItemCount(root);

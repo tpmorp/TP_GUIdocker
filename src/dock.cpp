@@ -1471,11 +1471,13 @@ static bool build_and_capture(bool interactive) {
 		return false;
 	}
 	g_slots = plan.slots;
+	dev_mark(L"用レイアウトの生成と保存");
 	log(L"TP_GUIdocker 用レイアウトを生成 (切り離し " + std::to_wstring(plan.slots.size()) + L" 件, 表示 " +
 		std::to_wstring(plan.visible_keys.size()) + L" 件)");
 
 	g_settings.session_active = true;
 	g_settings.save();
+	dev_mark(L"設定の保存");
 
 	// 2. 適用する (本体のエラー表示を監視)
 	cloak_begin(g_main);
@@ -1485,6 +1487,7 @@ static bool build_and_capture(bool interactive) {
 		return false;
 	}
 
+	dev_mark(L"本体のレイアウト適用 (呼び出し全体)");
 	// 3. 照合: 表示すべきパネルが全て指定位置に現れたこと
 	std::vector<std::pair<std::wstring, HWND>> found;
 	for (HWND h : find_floating_panels(g_main)) {
@@ -1525,6 +1528,7 @@ static bool build_and_capture(bool interactive) {
 		return false;
 	}
 
+	dev_mark(L"照合と題名の記憶");
 	// 4. 入れ物を置き、分割木のパネルを取り込む。それ以外は浮いた窓として記憶した位置へ
 	g_active = true;
 	attach_container();
@@ -1546,12 +1550,14 @@ static bool build_and_capture(bool interactive) {
 			}
 		}
 	}
+	dev_mark(L"パネルの取り込み");
 	collect_explorer_commands();
 	relayout();
 	save_tree();
 	SetTimer(g_container, TIMER_WATCH, 300, nullptr);
 	UpdateWindow(g_container);
 	cloak_end();
+	dev_mark(L"配置の確定と描画");
 	log(L"帯の高さ=" + std::to_wstring(tab_height()) + L" (メニューバー=" + std::to_wstring(menu_bar_height()) + L") 境界線=" + std::to_wstring(gap_size()));
 	log(L"有効化した (取り込み " + std::to_wstring(g_panels.size()) + L" 枚, 浮いた窓 " + std::to_wstring(g_floats.size()) + L" 枚)");
 	return true;
@@ -1603,9 +1609,11 @@ static bool enter_dock(bool interactive) {
 	}
 
 	log(L"===== 有効化 =====");
+	dev_mark(L"有効化の開始", true);
 	// 有効化の間は本体の画面を覆い、切り離される窓も描かせない (切り離しの直前から)
 	show_cover(ui::COVER);
 	struct CoverGuard { ~CoverGuard() { cloak_end(); hide_cover(); } } cover_guard;
+	dev_mark(L"覆いを出した");
 
 	// 前回が異常終了 (自由分割中の印が残っている) なら、まず本体の配置を正常に戻す
 	if (g_settings.session_active) {
@@ -1630,6 +1638,7 @@ static bool enter_dock(bool interactive) {
 		return false;
 	}
 
+	dev_mark(L"元の配置の保存 (省略時はその判定のみ)");
 	// 2. 自由分割用レイアウトの枠を本体に作らせる (メニューに無い場合のみ)
 	if (!find_menu_command(g_main, { L"表示", L"レイアウト", DOCK_LAYOUT })) {
 		if (!host_create_layout(g_main, g_container, DOCK_LAYOUT)) {
@@ -1638,6 +1647,7 @@ static bool enter_dock(bool interactive) {
 		}
 	}
 
+	dev_mark(L"用レイアウトの枠の確認");
 	// 3. 分割木を用意する (古い形式の分割木は使わない)
 	if (!g_root) {
 		if (g_settings.tree_version == TREE_VERSION) g_root = parse_tree(g_settings.tree);
@@ -1682,7 +1692,9 @@ static void exit_dock(bool apply_return) {
 		restored = restore_host_layout();
 		if (!restored) log(L"標準の画面へ戻す際に本体がエラーを出した");
 	}
-	cloak_end();
+	// 本体の終了に伴う無効化では、窓を隠したままにする。この後に本体が終了処理で窓を1つずつ閉じていく様子が
+	// 見えてしまうため (隠しを解くのは、終了が取り消された場合か、メイン窓が破棄された後の解放時)
+	if (!g_closing) cloak_end();
 	hide_cover();
 	g_settings.session_active = false;
 	// 終了に伴って元の配置へ戻し終えた: 本体はこの状態を保存するので、次の起動では元の配置の保存を省ける
@@ -2523,18 +2535,25 @@ static LRESULT CALLBACK main_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 			g_settings.save();
 			log(L"本体の終了要求 (有効中=" + std::to_wstring(was_active) + L")");
 			g_closing = true;
+			dev_mark(L"終了要求", true);
 			if (was_active) exit_dock(true);
 			g_closing = false;
+			dev_mark(L"無効化を終えた (この後は本体の終了処理)");
 			LRESULT r = DefSubclassProc(hwnd, msg, wp, lp);
 			// 保存確認などで終了が取り消された場合は、少し待って自由分割へ戻る
+			dev_mark(L"本体の終了処理から戻った");
 			if (was_active && IsWindow(hwnd) && !g_main_destroying && g_container) {
+				// 隠している窓は、再開の最後に元に戻る (enter の終わりの cloak_end)
 				SetTimer(g_container, TIMER_REENTER, 1500, nullptr);
+			} else {
+				cloak_end();
 			}
 			return r;
 		}
 		case WM_DESTROY:
 			g_main_destroying = true;
 			log(L"本体のメイン窓が破棄される");
+			dev_mark(L"本体の終了処理を終えた (メイン窓の破棄)");
 			if (g_active) exit_dock(false);
 			break;
 		case WM_NCDESTROY:
